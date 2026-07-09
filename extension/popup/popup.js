@@ -1,4 +1,4 @@
-const BACKEND_URL = 'http://localhost:3000';
+const BACKEND_URL = 'https://ais-dev-clrnti3bzhacw6tpz7qw6w-47165258965.asia-east1.run.app';
 let uploadedImages = [];
 let analysisResults = null;
 
@@ -202,6 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function displayResults(results) {
+        if (!results) return;
         analysisResults = results;
         resultsSection.style.display = 'block';
 
