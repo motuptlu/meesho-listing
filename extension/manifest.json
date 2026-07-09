@@ -11,7 +11,7 @@
   ],
   "host_permissions": [
     "https://supplier.meesho.com/*",
-    "https://ais-dev-clrnti3bzhacw6tpz7qw6w-47165258965.asia-east1.run.app/*"
+    "http://localhost:3000/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",

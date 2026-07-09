@@ -1,4 +1,4 @@
-const BACKEND_URL = 'https://ais-dev-clrnti3bzhacw6tpz7qw6w-47165258965.asia-east1.run.app';
+const BACKEND_URL = 'http://localhost:3000';
 let uploadedImages = [];
 let analysisResults = null;
 
