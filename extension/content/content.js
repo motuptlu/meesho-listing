@@ -1,496 +1,257 @@
-console.log('✅ Meesho Auto Lister: Content Script Loaded');
+/**
+ * MEESHO AUTO LISTER - ADVANCED SCANNING & FILLING ENGINE
+ */
 
-// --- Global State & Listeners ---
+console.log('🛍️ Meesho Automation Engine: Advanced Mode Active');
 
+// --- MESSAGE LISTENER ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('Content script received:', message.action);
-    
     if (message.action === 'SCRAPE_FORM') {
-        (async () => {
-            try {
-                showPageIndicator('Scanning form fields...');
-                const result = await collectAllFields();
-                showPageSuccess(`Found ${result.totalFields} fields!`);
-                sendResponse(result);
-            } catch (err) {
-                hidePageIndicator();
-                console.error('Scrape error:', err);
-                sendResponse({ success: false, error: err.message, fields: [] });
-            }
-        })();
-        return true; // Keep channel open for async
-    }
-    
-    if (message.action === 'FILL_FORM') {
-        (async () => {
-            try {
-                showPageIndicator('Filling form...');
-                const report = await fillAllDetectedFields(
-                    message.data, message.fields, message.images
-                );
-                showPageSuccess(`Filled ${report.filled}/${report.totalFields} fields!`);
-                sendResponse({ success: true, report });
-            } catch (err) {
-                hidePageIndicator();
-                console.error('Fill error:', err);
-                sendResponse({ 
-                    success: false, error: err.message, 
-                    filled: 0, failed: 0, totalFields: 0, details: [] 
-                });
-            }
-        })();
+        runSmartScan(sendResponse);
         return true;
     }
-    
-    if (message.action === 'CHECK_PAGE') {
-        sendResponse({ 
-            connected: true, 
-            url: window.location.href,
-            isListingPage: window.location.href.includes('supplier.meesho.com')
-        });
+    if (message.action === 'FILL_FORM') {
+        runSmartFill(message.data, message.fields, message.images, sendResponse);
         return true;
     }
 });
 
-// --- Master Field Collection ---
+// --- SCANNING LOGIC ---
 
-async function collectAllFields() {
-    const fields = [];
-    const processedLabels = new Set();
-    
-    // Scroll to load lazy content
-    await autoScroll();
-    
-    // Find all potential field containers
-    const containers = findFieldContainers();
-    console.log(`Found ${containers.length} potential containers`);
-    
-    for (const container of containers) {
-        try {
-            const interactiveEl = findInteractiveElement(container);
-            if (!interactiveEl) continue;
-            
-            const label = getSmartLabel(interactiveEl, container);
+async function runSmartScan(sendResponse) {
+    try {
+        showStatus('Scanning Meesho Page...');
+        await autoScroll();
+        
+        const fields = [];
+        const processedLabels = new Set();
+        
+        // Find field containers
+        const containers = findFieldContainers();
+        
+        for (const container of containers) {
+            const input = findInteractiveElement(container);
+            if (!input) continue;
+
+            const label = getSmartLabel(input, container);
             if (!label || label === 'Unknown Field' || processedLabels.has(label.toLowerCase())) continue;
             
-            const type = detectFieldType(interactiveEl, container);
-            const required = isRequired(container, interactiveEl);
-            const selector = generateSelector(interactiveEl);
+            const type = detectFieldType(input);
+            const selector = generateSelector(input);
             
             let options = null;
-            let optionLabels = null;
             
+            // CRITICAL: Extract options for dropdowns during scan
             if (type === 'dropdown') {
-                updatePageIndicator(`Extracting: ${label}...`);
-                options = await extractDropdownOptions(interactiveEl, label);
-                optionLabels = options.map(o => o.label);
-                await sleep(400);
-            } else if (type === 'multi_chip') {
-                options = await extractChipOptions(container);
-                optionLabels = options.map(o => o.label);
-            } else if (type === 'radio') {
-                options = extractRadioOptions(container);
-                optionLabels = options.map(o => o.label);
+                updateStatus(`Extracting options: ${label}...`);
+                options = await extractOptions(input, label);
+                await sleep(300);
             }
-            
+
             fields.push({
-                fieldId: 'field_' + fields.length + '_' + Date.now(),
-                label: label,
-                type: type,
-                required: required,
-                placeholder: interactiveEl.placeholder || interactiveEl.getAttribute('placeholder') || '',
-                currentValue: interactiveEl.value || interactiveEl.textContent?.trim() || '',
-                selector: selector,
-                options: options,
-                optionLabels: optionLabels,
-                optionCount: options ? options.length : 0
+                label,
+                type,
+                required: container.innerText.includes('*'),
+                selector,
+                options: options || [],
+                optionLabels: options ? options.map(o => o.label) : [],
+                fieldId: `f_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`
             });
             
             processedLabels.add(label.toLowerCase());
-            console.log(`Scanned: ${label} (${type})`);
-        } catch (err) {
-            console.warn('Field processing error:', err);
         }
-    }
-    
-    // Sort by vertical position
-    fields.sort((a, b) => {
-        const elA = document.querySelector(a.selector);
-        const elB = document.querySelector(b.selector);
-        if (!elA || !elB) return 0;
-        return elA.getBoundingClientRect().top - elB.getBoundingClientRect().top;
-    });
 
-    return {
-        success: true,
-        totalFields: fields.length,
-        dropdownCount: fields.filter(f => f.type === 'dropdown').length,
-        chipCount: fields.filter(f => f.type === 'multi_chip').length,
-        requiredCount: fields.filter(f => f.required).length,
-        fields: fields
-    };
+        hideStatus();
+        sendResponse({ 
+            success: true, 
+            totalFields: fields.length, 
+            fields,
+            dropdownCount: fields.filter(f => f.type === 'dropdown').length
+        });
+    } catch (err) {
+        console.error('Scan Error:', err);
+        hideStatus();
+        sendResponse({ success: false, error: err.message });
+    }
 }
 
-function findFieldContainers() {
-    const containers = [];
-    const allDivs = document.querySelectorAll('div');
-    
-    for (const div of allDivs) {
-        // Skip very large containers or hidden ones
-        const rect = div.getBoundingClientRect();
-        if (rect.height < 15 || rect.height > 300 || rect.width < 50) continue;
-        
-        const hasInteractive = !!div.querySelector('input:not([type="hidden"]), textarea, select, [role="combobox"], [aria-haspopup="true"]');
-        if (!hasInteractive) continue;
-        
-        // Check for label-like text
-        const text = div.innerText || '';
-        if (text.length > 2 && text.length < 500) {
-            containers.push(div);
-        }
-    }
-    
-    // Filter to keep only innermost containers
-    return containers.filter(c => {
-        return !containers.some(other => c !== other && c.contains(other));
-    });
-}
+// --- DROPDOWN OPTION EXTRACTION ---
 
-function findInteractiveElement(container) {
-    return container.querySelector('input:not([type="hidden"]), textarea, select, [role="combobox"], [aria-haspopup="true"]') || 
-           container.querySelector('div[class*="select" i], div[class*="Select" i], [role="button"]');
-}
-
-// --- Smart Label Extraction ---
-
-function getSmartLabel(element, container) {
-    // 1. Check aria-label
-    const ariaLabel = element.getAttribute('aria-label');
-    if (ariaLabel) return cleanLabel(ariaLabel);
-    
-    // 2. Check linked label
-    if (element.id) {
-        const labelEl = document.querySelector(`label[for="${element.id}"]`);
-        if (labelEl) return cleanLabel(labelEl.textContent);
-    }
-    
-    // 3. Search in container for text elements before the input
-    const textElements = container.querySelectorAll('span, label, p, div');
-    for (const el of textElements) {
-        if (el === element || element.contains(el)) continue;
-        const text = el.innerText.trim();
-        if (text.length > 2 && text.length < 50 && !/select|enter|optional/i.test(text)) {
-            return cleanLabel(text);
-        }
-    }
-    
-    // 4. Check siblings of parent
-    let parent = element.parentElement;
-    for (let i = 0; i < 3; i++) {
-        if (!parent) break;
-        const prev = parent.previousElementSibling;
-        if (prev) {
-            const text = prev.innerText.trim();
-            if (text.length > 2 && text.length < 60) return cleanLabel(text);
-        }
-        parent = parent.parentElement;
-    }
-    
-    // 5. Placeholder
-    if (element.placeholder) return cleanLabel(element.placeholder.replace(/^enter\s+/i, ''));
-    
-    return 'Unknown Field';
-}
-
-function cleanLabel(text) {
-    if (!text) return '';
-    // Remove *, (i) info icon text, extra spaces
-    return text.replace(/\*/g, '')
-               .replace(/\(i\)/g, '')
-               .replace(/\s+/g, ' ')
-               .replace(/optional/i, '')
-               .trim();
-}
-
-// --- Field Type Detection ---
-
-function detectFieldType(element, container) {
-    const tagName = element.tagName;
-    const typeAttr = element.getAttribute('type');
-    const role = element.getAttribute('role');
-    const ariaHasPopup = element.getAttribute('aria-haspopup');
-    const className = (element.className || '').toString();
-    
-    if (tagName === 'TEXTAREA') return 'textarea';
-    if (tagName === 'SELECT') return 'dropdown';
-    
-    if (tagName === 'INPUT') {
-        if (typeAttr === 'number' || element.inputmode === 'numeric') return 'number_input';
-        if (typeAttr === 'radio') return 'radio';
-        if (typeAttr === 'checkbox') return 'checkbox';
-        if (typeAttr === 'file') return 'file_upload';
-        
-        // Detect number by label context
-        const label = getSmartLabel(element, container).toLowerCase();
-        if (/weight|price|mrp|stock|quantity|pincode|gms|kg|cm/i.test(label)) return 'number_input';
-        
-        return 'text_input';
-    }
-    
-    if (role === 'combobox' || role === 'listbox' || ariaHasPopup === 'true' || ariaHasPopup === 'listbox' || /select|dropdown/i.test(className)) {
-        return 'dropdown';
-    }
-    
-    if (container.querySelector('input[type="radio"]')) return 'radio';
-    if (/chip|tag/i.test(className) || container.querySelector('[class*="chip" i]')) return 'multi_chip';
-    
-    return 'text_input';
-}
-
-function isRequired(container, element) {
-    if (element.required || element.getAttribute('aria-required') === 'true') return true;
-    if (container.innerText.includes('*')) return true;
-    return false;
-}
-
-// --- Dropdown Options Extraction ---
-
-async function extractDropdownOptions(element, label) {
+async function extractOptions(el, label) {
     const options = [];
-    const trigger = element.querySelector('[role="button"], button, [class*="indicator" i]') || element;
-    
     try {
-        element.scrollIntoView({ behavior: 'instant', block: 'center' });
-        await sleep(300);
+        el.scrollIntoView({ behavior: 'instant', block: 'center' });
+        await sleep(200);
         
-        trigger.click();
-        await sleep(1000); // Wait for menu
-        
-        const menuSelectors = [
-            '[role="listbox"]', '.MuiMenu-paper', '.MuiList-root', 
-            '[class*="menu" i]:not(nav)', '[class*="Options" i]', 'div[class*="portal" i]'
-        ];
-        
-        let menu = null;
-        for (const sel of menuSelectors) {
-            const found = document.querySelectorAll(sel);
-            for (const f of found) {
-                const r = f.getBoundingClientRect();
-                if (r.height > 10) { menu = f; break; }
-            }
-            if (menu) break;
-        }
-        
+        // Click to open
+        el.click();
+        await sleep(800);
+
+        // Find Menu
+        const menu = findVisibleMenu();
         if (menu) {
-            const items = menu.querySelectorAll('[role="option"], .MuiMenuItem-root, li, [class*="option" i]');
+            const items = menu.querySelectorAll('[role="option"], li, [class*="option" i]');
             items.forEach(item => {
                 const text = item.innerText.trim();
                 if (text && text.length < 100 && !/select/i.test(text)) {
                     if (!options.find(o => o.label === text)) {
-                        options.push({ value: item.getAttribute('data-value') || text, label: text });
+                        options.push({ value: text, label: text });
                     }
                 }
             });
         }
-        
+
         // Close
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-        await sleep(300);
         document.body.click();
-        await sleep(300);
-        
-    } catch (err) {
-        console.warn(`Dropdown error for ${label}:`, err);
+        await sleep(200);
+    } catch (e) {
+        console.warn(`Option extraction failed for ${label}`, e);
     }
     return options;
 }
 
-async function extractChipOptions(container) {
-    const options = [];
-    const chips = container.querySelectorAll('.MuiChip-root, [class*="chip" i], [role="button"]');
-    chips.forEach(c => {
-        const text = c.innerText.replace(/[×x✕]/g, '').trim();
-        if (text) options.push({ value: text, label: text });
-    });
-    return options;
-}
-
-function extractRadioOptions(container) {
-    const options = [];
-    const labels = container.querySelectorAll('label, .MuiFormControlLabel-root');
-    labels.forEach(l => {
-        const text = l.innerText.trim();
-        if (text) options.push({ value: text, label: text });
-    });
-    return options;
-}
-
-// --- Selector Generation ---
-
-function generateSelector(element) {
-    if (element.id) return '#' + CSS.escape(element.id);
-    if (element.name) return `[name="${element.name}"]`;
-    
-    const testId = element.getAttribute('data-testid');
-    if (testId) return `[data-testid="${testId}"]`;
-    
-    // Build path
-    const path = [];
-    let curr = element;
-    while (curr && curr !== document.body) {
-        let sel = curr.tagName.toLowerCase();
-        if (curr.className && typeof curr.className === 'string') {
-            const cls = curr.className.split(/\s+/).filter(c => c.length > 0 && !/Mui|active|focus/i.test(c)).slice(0, 1);
-            if (cls.length) sel += '.' + CSS.escape(cls[0]);
-        }
-        path.unshift(sel);
-        curr = curr.parentElement;
-        if (path.length > 5) break;
+function findVisibleMenu() {
+    const selectors = ['[role="listbox"]', '.MuiMenu-paper', '[class*="menu" i]', '[class*="popup" i]'];
+    for (const s of selectors) {
+        const menus = Array.from(document.querySelectorAll(s));
+        const visible = menus.find(m => {
+            const r = m.getBoundingClientRect();
+            return r.height > 10 && r.width > 10;
+        });
+        if (visible) return visible;
     }
-    return path.join(' > ');
+    return null;
 }
 
-// --- Form Filling Logic ---
+// --- FILLING LOGIC ---
 
-async function fillAllDetectedFields(results, fields, images) {
-    const report = { totalFields: fields.length, filled: 0, failed: 0, skipped: 0, details: [] };
+async function runSmartFill(data, fields, images, sendResponse) {
+    const report = { totalFields: fields.length, filled: 0, failed: 0, details: [] };
     
     for (let i = 0; i < fields.length; i++) {
         const field = fields[i];
-        const value = results[field.label];
-        
-        if (value === undefined || value === null || value === '') {
-            report.skipped++;
+        const val = data[field.label];
+        if (!val) continue;
+
+        updateStatus(`Filling: ${field.label}...`);
+        chrome.runtime.sendMessage({ action: 'FILL_PROGRESS', current: i + 1, total: fields.length, fieldName: field.label });
+
+        const el = document.querySelector(field.selector) || findFieldByLabel(field.label);
+        if (!el) {
+            report.failed++;
             continue;
         }
-        
-        updatePageIndicator(`Filling: ${field.label}...`);
-        chrome.runtime.sendMessage({ action: 'FILL_PROGRESS', current: i + 1, total: fields.length, fieldName: field.label });
-        
+
         try {
             let success = false;
-            if (field.type === 'dropdown') success = await fillDropdown(field.selector, value);
-            else if (field.type === 'multi_chip') success = await fillMultiChips(field.selector, value);
-            else if (field.type === 'textarea') success = await fillTextarea(field.selector, value);
-            else if (field.type === 'number_input') success = await fillNumberInput(field.selector, value);
-            else success = await fillTextInput(field.selector, value);
-            
+            if (field.type === 'dropdown') {
+                success = await fillDropdown(el, val, field.label);
+            } else {
+                success = await fillSimpleInput(el, val);
+            }
+
             if (success) {
                 report.filled++;
-                report.details.push({ label: field.label, status: 'filled', value });
+                report.details.push({ label: field.label, status: 'filled' });
             } else {
                 report.failed++;
-                report.details.push({ label: field.label, status: 'failed', reason: 'Element not found' });
             }
-        } catch (err) {
+        } catch (e) {
             report.failed++;
-            report.details.push({ label: field.label, status: 'error', reason: err.message });
         }
-        await sleep(400);
+        await sleep(300);
+    }
+
+    if (images?.length) await uploadImages(images);
+    
+    hideStatus();
+    sendResponse({ success: true, report });
+}
+
+async function fillDropdown(el, targetValue, label) {
+    el.click();
+    await sleep(800);
+    
+    const menu = findVisibleMenu();
+    if (!menu) return false;
+
+    const options = Array.from(menu.querySelectorAll('[role="option"], li, [class*="option" i]'))
+        .map(opt => ({ el: opt, text: opt.innerText.trim() }));
+
+    const match = options.find(o => o.text.toLowerCase().includes(targetValue.toLowerCase()) || targetValue.toLowerCase().includes(o.text.toLowerCase()));
+    
+    if (match) {
+        match.el.click();
+        await sleep(300);
+        return true;
     }
     
-    if (images && images.length > 0) {
-        updatePageIndicator('Uploading images...');
-        await uploadImages(images);
-    }
-    
-    return report;
-}
-
-async function fillTextInput(selector, value) {
-    const el = document.querySelector(selector);
-    if (!el) return false;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await sleep(200);
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    setter.call(el, String(value));
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
-}
-
-async function fillNumberInput(selector, value) {
-    const el = document.querySelector(selector);
-    if (!el) return false;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await sleep(200);
-    const num = parseFloat(String(value).replace(/[^0-9.]/g, ''));
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    setter.call(el, isNaN(num) ? '' : String(num));
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
-}
-
-async function fillTextarea(selector, value) {
-    const el = document.querySelector(selector);
-    if (!el) return false;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await sleep(200);
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-    setter.call(el, String(value));
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    return true;
-}
-
-async function fillDropdown(selector, value) {
-    const trigger = document.querySelector(selector);
-    if (!trigger) return false;
-    trigger.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await sleep(300);
-    trigger.click();
-    await sleep(1000);
-    
-    const valueStr = String(value).toLowerCase().trim();
-    const options = document.querySelectorAll('[role="option"], li, .MuiMenuItem-root');
-    for (const opt of options) {
-        const text = opt.innerText.trim().toLowerCase();
-        if (text === valueStr || text.includes(valueStr) || valueStr.includes(text)) {
-            opt.click();
-            return true;
-        }
-    }
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    document.body.click();
     return false;
 }
 
-async function fillMultiChips(selector, values) {
-    const container = document.querySelector(selector);
-    if (!container) return false;
-    const vals = Array.isArray(values) ? values : [values];
-    let any = false;
-    for (const v of vals) {
-        const vStr = String(v).toLowerCase().trim();
-        const chips = container.querySelectorAll('.MuiChip-root, [class*="chip" i], [role="button"]');
-        for (const chip of chips) {
-            const text = chip.innerText.replace(/[×x✕]/g, '').trim().toLowerCase();
-            if (text === vStr || text.includes(vStr)) {
-                chip.click();
-                any = true;
-                await sleep(200);
-                break;
-            }
-        }
-    }
-    return any;
-}
-
-async function uploadImages(base64Images) {
-    const input = document.querySelector('input[type="file"]');
-    if (!input) return false;
-    const dt = new DataTransfer();
-    for (let i = 0; i < base64Images.length; i++) {
-        const res = await fetch(base64Images[i]);
-        const blob = await res.blob();
-        dt.items.add(new File([blob], `product-${i}.jpg`, { type: 'image/jpeg' }));
-    }
-    input.files = dt.files;
-    input.dispatchEvent(new Event('change', { bubbles: true }));
+async function fillSimpleInput(el, val) {
+    el.focus();
+    const setter = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, val);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
 }
 
-// --- Helpers ---
+async function uploadImages(images) {
+    const input = document.querySelector('input[type="file"]');
+    if (!input) return;
+    const dt = new DataTransfer();
+    for (const base64 of images) {
+        const res = await fetch(base64);
+        const blob = await res.blob();
+        dt.items.add(new File([blob], 'prod.jpg', { type: 'image/jpeg' }));
+    }
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// --- UTILS ---
+
+function findFieldContainers() {
+    return Array.from(document.querySelectorAll('div'))
+        .filter(div => {
+            const r = div.getBoundingClientRect();
+            return r.height > 20 && r.height < 400 && div.querySelector('input, textarea, [role="combobox"], [aria-haspopup="true"]');
+        })
+        .filter(c => !Array.from(c.querySelectorAll('div')).some(child => child.querySelector('input, textarea')));
+}
+
+function findInteractiveElement(container) {
+    return container.querySelector('input:not([type="hidden"]), textarea, [role="combobox"], [aria-haspopup="true"]');
+}
+
+function getSmartLabel(el, container) {
+    const texts = Array.from(container.querySelectorAll('span, p, label, div'))
+        .filter(n => n.children.length === 0)
+        .map(n => n.innerText.trim())
+        .filter(t => t.length > 2 && t.length < 50 && !/select|enter/i.test(t));
+    return texts[0] || el.placeholder || 'Unknown Field';
+}
+
+function detectFieldType(el) {
+    if (el.tagName === 'TEXTAREA') return 'textarea';
+    if (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-haspopup') === 'true') return 'dropdown';
+    return 'input';
+}
+
+function generateSelector(el) {
+    if (el.id) return `#${CSS.escape(el.id)}`;
+    if (el.name) return `[name="${CSS.escape(el.name)}"]`;
+    return el.tagName.toLowerCase();
+}
+
+function findFieldByLabel(label) {
+    return Array.from(document.querySelectorAll('input, textarea, [role="combobox"]'))
+        .find(el => el.placeholder?.includes(label) || el.getAttribute('aria-label')?.includes(label));
+}
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -498,37 +259,34 @@ async function autoScroll() {
     const h = document.documentElement.scrollHeight;
     for (let i = 0; i < h; i += 500) {
         window.scrollTo(0, i);
-        await sleep(150);
+        await sleep(100);
     }
     window.scrollTo(0, 0);
-    await sleep(300);
 }
 
-function showPageIndicator(text) {
-    let el = document.getElementById('malIndicator');
+function showStatus(text) {
+    let el = document.getElementById('mal-indicator');
     if (!el) {
         el = document.createElement('div');
-        el.id = 'malIndicator';
+        el.id = 'mal-indicator';
+        el.style.cssText = `position:fixed;bottom:20px;right:20px;background:#9C27B0;color:white;padding:12px 20px;border-radius:30px;z-index:999999;font-family:sans-serif;box-shadow:0 4px 15px rgba(0,0,0,0.3);display:flex;align-items:center;gap:10px;font-size:13px;`;
         document.body.appendChild(el);
     }
-    el.style.display = 'flex';
-    el.innerHTML = `<div class="mal-spinner"></div><span>${text}</span>`;
+    el.innerHTML = `<div style="width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:mal-spin 0.8s linear infinite;"></div><span>${text}</span>`;
+    if (!document.getElementById('mal-anim')) {
+        const s = document.createElement('style');
+        s.id = 'mal-anim';
+        s.textContent = `@keyframes mal-spin { to { transform: rotate(360deg); } }`;
+        document.head.appendChild(s);
+    }
 }
 
-function updatePageIndicator(text) {
-    const el = document.getElementById('malIndicator');
+function updateStatus(text) {
+    const el = document.getElementById('mal-indicator');
     if (el) el.querySelector('span').innerText = text;
 }
 
-function showPageSuccess(text) {
-    const el = document.getElementById('malIndicator');
-    if (el) {
-        el.innerHTML = `<span>✅ ${text}</span>`;
-        setTimeout(() => el.style.display = 'none', 3000);
-    }
-}
-
-function hidePageIndicator() {
-    const el = document.getElementById('malIndicator');
-    if (el) el.style.display = 'none';
+function hideStatus() {
+    const el = document.getElementById('mal-indicator');
+    if (el) setTimeout(() => el.remove(), 2000);
 }

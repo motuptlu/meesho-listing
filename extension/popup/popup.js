@@ -216,50 +216,13 @@ function displayResults(results, fields) {
         label.textContent = f.label + (f.required ? ' *' : '');
         group.appendChild(label);
         
-        if (f.type === 'dropdown' && f.optionLabels?.length > 0) {
-            const select = document.createElement('select');
-            select.className = 'result-select';
-            select.dataset.label = f.label;
-            f.optionLabels.forEach(opt => {
-                const o = document.createElement('option');
-                o.value = opt;
-                o.text = opt;
-                if (opt === val) o.selected = true;
-                select.appendChild(o);
-            });
-            group.appendChild(select);
-        } else if (f.type === 'multi_chip' && f.optionLabels?.length > 0) {
-            const chipsDiv = document.createElement('div');
-            chipsDiv.className = 'result-chips';
-            chipsDiv.dataset.label = f.label;
-            const selected = Array.isArray(val) ? val : [val];
-            f.optionLabels.forEach(opt => {
-                const l = document.createElement('label');
-                l.className = 'chip-option';
-                const cb = document.createElement('input');
-                cb.type = 'checkbox';
-                cb.value = opt;
-                cb.checked = selected.includes(opt);
-                l.appendChild(cb);
-                l.appendChild(document.createTextNode(' ' + opt));
-                chipsDiv.appendChild(l);
-            });
-            group.appendChild(chipsDiv);
-        } else if (f.type === 'textarea') {
-            const ta = document.createElement('textarea');
-            ta.className = 'result-textarea';
-            ta.dataset.label = f.label;
-            ta.value = val || '';
-            ta.rows = 3;
-            group.appendChild(ta);
-        } else {
-            const input = document.createElement('input');
-            input.className = 'result-input';
-            input.type = f.type === 'number_input' ? 'number' : 'text';
-            input.dataset.label = f.label;
-            input.value = val || '';
-            group.appendChild(input);
-        }
+        const input = document.createElement('input');
+        input.className = 'result-input';
+        input.type = 'text';
+        input.dataset.label = f.label;
+        input.value = Array.isArray(val) ? val.join(', ') : (val || '');
+        group.appendChild(input);
+        
         form.appendChild(group);
     });
 }
@@ -267,12 +230,16 @@ function displayResults(results, fields) {
 function collectEditedResults() {
     const results = {};
     const form = document.getElementById('resultsForm');
-    form.querySelectorAll('input:not([type="checkbox"]), select, textarea').forEach(el => {
-        if (el.dataset.label) results[el.dataset.label] = el.value;
-    });
-    form.querySelectorAll('.result-chips').forEach(container => {
-        const label = container.dataset.label;
-        results[label] = Array.from(container.querySelectorAll('input:checked')).map(cb => cb.value);
+    form.querySelectorAll('input').forEach(el => {
+        if (el.dataset.label) {
+            const val = el.value.trim();
+            // If it looks like a comma separated list (for multi-chips), split it
+            if (val.includes(',') && val.split(',').length > 1) {
+                results[el.dataset.label] = val.split(',').map(v => v.trim());
+            } else {
+                results[el.dataset.label] = val;
+            }
+        }
     });
     return results;
 }
@@ -284,6 +251,12 @@ async function onFillClick() {
     document.getElementById('fillProgress').style.display = 'block';
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs || tabs.length === 0) {
+            showToast('No active Meesho tab found', 'error');
+            goToStep(3);
+            return;
+        }
+
         chrome.tabs.sendMessage(tabs[0].id, {
             action: 'FILL_FORM',
             data,
@@ -291,7 +264,8 @@ async function onFillClick() {
             images: uploadedImages.map(img => img.base64)
         }, (response) => {
             if (chrome.runtime.lastError || !response || !response.success) {
-                showToast('Fill failed', 'error');
+                console.error('Fill error:', chrome.runtime.lastError);
+                showToast('Fill failed. Refresh Meesho and try again.', 'error');
                 goToStep(3);
                 return;
             }
