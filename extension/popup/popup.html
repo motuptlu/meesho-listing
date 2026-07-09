@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meesho Auto Lister</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="app">
+        <header class="app-header">
+            <div class="logo">🛍️</div>
+            <div class="header-text">
+                <h1>Meesho Auto Lister</h1>
+                <p>AI-Powered Product Listing</p>
+            </div>
+        </header>
+
+        <div id="statusBar" class="status-bar">
+            <span id="statusIcon" class="status-icon"></span>
+            <span id="statusText" class="status-text">Checking connection...</span>
+        </div>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="listing">New Listing</button>
+            <button class="tab-btn" data-tab="history">History</button>
+        </nav>
+
+        <div id="listingView" class="tab-view active">
+            <div class="section">
+                <h3>Upload Product Images</h3>
+                <div id="uploadZone" class="upload-zone">
+                    <input type="file" id="imageInput" accept="image/*" multiple hidden>
+                    <div class="upload-content">
+                        <span class="upload-emoji">📸</span>
+                        <p>Drag & drop or click to upload</p>
+                        <p class="small-text">(Max 5 images)</p>
+                    </div>
+                </div>
+                <div id="imageGrid" class="image-grid"></div>
+                
+                <div class="action-bar">
+                    <button id="analyzeBtn" class="btn btn-primary" disabled>Analyze with AI</button>
+                </div>
+            </div>
+
+            <div id="resultsSection" class="results-section" style="display: none;">
+                <h3>AI Analysis Results</h3>
+                <form id="listingForm">
+                    <div class="form-group">
+                        <label>Product Name</label>
+                        <input type="text" id="result-productName">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Category</label>
+                            <input type="text" id="result-category">
+                        </div>
+                        <div class="form-group">
+                            <label>Sub Category</label>
+                            <input type="text" id="result-subCategory">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="result-description" rows="4"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>MRP (₹)</label>
+                            <input type="number" id="result-mrp">
+                        </div>
+                        <div class="form-group">
+                            <label>Selling Price (₹)</label>
+                            <input type="number" id="result-sellingPrice">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Color</label>
+                            <input type="text" id="result-color">
+                        </div>
+                        <div class="form-group">
+                            <label>Size</label>
+                            <input type="text" id="result-size">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Material</label>
+                            <input type="text" id="result-material">
+                        </div>
+                        <div class="form-group">
+                            <label>Weight (g)</label>
+                            <input type="number" id="result-weight">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Brand</label>
+                        <input type="text" id="result-brand">
+                    </div>
+                    <div class="form-group">
+                        <label>Keywords</label>
+                        <input type="text" id="result-keywords">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Occasion</label>
+                            <input type="text" id="result-occasion">
+                        </div>
+                        <div class="form-group">
+                            <label>Pattern</label>
+                            <input type="text" id="result-pattern">
+                        </div>
+                        <div class="form-group">
+                            <label>Gender</label>
+                            <input type="text" id="result-gender">
+                        </div>
+                    </div>
+                    
+                    <button type="button" id="fillBtn" class="btn btn-success">Fill Meesho Form</button>
+                </form>
+            </div>
+        </div>
+
+        <div id="historyView" class="tab-view">
+            <div id="historySection" class="section history-section">
+                <div class="history-header">
+                    <h3>Listing History</h3>
+                    <button id="clearHistoryBtn" class="text-btn">Clear All</button>
+                </div>
+                <div id="historyList" class="history-list">
+                    <p class="empty-text">No previous listings found.</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+            <p>AI is analyzing your product...</p>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
