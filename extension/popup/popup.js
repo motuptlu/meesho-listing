@@ -9,18 +9,13 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function init() {
-    // Elements
     const scanBtn = document.getElementById('scanBtn');
     const analyzeBtn = document.getElementById('analyzeBtn');
     const fillBtn = document.getElementById('fillBtn');
-    const backBtn2 = document.getElementById('backBtn2');
-    const backBtn3 = document.getElementById('backBtn3');
-    const startOverBtn = document.getElementById('startOverBtn');
-    const clearHistoryBtn = document.getElementById('clearHistoryBtn');
-    const uploadZone = document.getElementById('uploadZone');
     const imageInput = document.getElementById('imageInput');
-    
-    // Tab switching
+    const uploadZone = document.getElementById('uploadZone');
+
+    // Tab Logic
     const tabBtns = document.querySelectorAll('.tab-btn');
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -32,22 +27,17 @@ function init() {
         });
     });
 
-    // Step navigation
+    // Step Logic
     scanBtn.addEventListener('click', onScanClick);
     analyzeBtn.addEventListener('click', onAnalyzeClick);
     fillBtn.addEventListener('click', onFillClick);
-    backBtn2.addEventListener('click', () => goToStep(1));
-    backBtn3.addEventListener('click', () => goToStep(2));
-    startOverBtn.addEventListener('click', () => {
-        uploadedImages = [];
-        document.getElementById('imageGrid').innerHTML = '';
-        scanBtn.disabled = true;
-        goToStep(1);
-    });
     
-    clearHistoryBtn.addEventListener('click', clearHistory);
+    document.getElementById('backBtn2').addEventListener('click', () => goToStep(1));
+    document.getElementById('backBtn3').addEventListener('click', () => goToStep(2));
+    document.getElementById('startOverBtn').addEventListener('click', () => location.reload());
+    document.getElementById('clearHistoryBtn').addEventListener('click', clearHistory);
 
-    // Upload handling
+    // Upload Logic
     uploadZone.addEventListener('click', () => imageInput.click());
     uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.style.borderColor = '#9C27B0'; });
     uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor = ''; });
@@ -59,14 +49,6 @@ function init() {
     imageInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
     checkPage();
-    loadHistory();
-    
-    // Listen for progress updates from content script
-    chrome.runtime.onMessage.addListener((request) => {
-        if (request.action === 'FILL_PROGRESS') {
-            updateProgress(request.current, request.total, request.fieldName);
-        }
-    });
 }
 
 function checkPage() {
@@ -78,7 +60,7 @@ function checkPage() {
             dot.title = 'Connected to Meesho';
         } else {
             dot.className = 'status-dot disconnected';
-            dot.title = 'Not on Meesho Listing Page';
+            dot.title = 'Open Meesho Listing Page';
         }
     });
 }
@@ -89,7 +71,6 @@ function handleFiles(files) {
         showToast('Max 5 images allowed', 'error');
         return;
     }
-
     fileList.forEach(file => {
         if (!file.type.startsWith('image/')) return;
         const reader = new FileReader();
@@ -105,12 +86,12 @@ function handleFiles(files) {
 function renderPreviews() {
     const grid = document.getElementById('imageGrid');
     grid.innerHTML = '';
-    uploadedImages.forEach((item, index) => {
+    uploadedImages.forEach((img, idx) => {
         const div = document.createElement('div');
         div.className = 'preview-item';
-        div.innerHTML = `<img src="${item.base64}"><button class="remove-btn">×</button>`;
+        div.innerHTML = `<img src="${img.base64}"><button class="remove-btn">×</button>`;
         div.querySelector('.remove-btn').onclick = () => {
-            uploadedImages.splice(index, 1);
+            uploadedImages.splice(idx, 1);
             renderPreviews();
             if (uploadedImages.length === 0) document.getElementById('scanBtn').disabled = true;
         };
@@ -126,7 +107,7 @@ function goToStep(n) {
     document.querySelectorAll('.step').forEach((s, i) => {
         s.classList.remove('active', 'complete');
         if (i + 1 === n) s.classList.add('active');
-        if (i + 1 < n) s.classList.add('complete');
+        else if (i + 1 < n) s.classList.add('complete');
     });
 }
 
@@ -135,17 +116,9 @@ async function onScanClick() {
     document.getElementById('scanStatus').style.display = 'flex';
     document.getElementById('fieldsSummary').style.display = 'none';
     document.getElementById('fieldsList').innerHTML = '';
-    document.getElementById('analyzeBtn').disabled = true;
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        if (!tab || !tab.url.includes('supplier.meesho.com')) {
-            showToast('Please open Meesho Listing Page', 'error');
-            goToStep(1);
-            return;
-        }
-
-        chrome.tabs.sendMessage(tab.id, { action: 'SCRAPE_FORM' }, (response) => {
+        chrome.tabs.sendMessage(tabs[0].id, { action: 'SCRAPE_FORM' }, (response) => {
             if (chrome.runtime.lastError || !response || !response.success) {
                 showToast('Scan failed. Refresh Meesho tab.', 'error');
                 goToStep(1);
@@ -161,44 +134,39 @@ function displayScanResults(data) {
     document.getElementById('scanStatus').style.display = 'none';
     document.getElementById('fieldsSummary').style.display = 'grid';
     
-    const counts = {
-        total: data.fields.length,
-        dropdown: data.fields.filter(f => f.type === 'dropdown').length,
-        chips: data.fields.filter(f => f.type === 'multi_chip').length,
-        required: data.fields.filter(f => f.required).length
-    };
+    document.getElementById('totalFieldsCount').innerText = data.totalFields;
+    document.getElementById('dropdownCount').innerText = data.dropdownCount;
+    document.getElementById('chipsCount').innerText = data.chipCount;
+    document.getElementById('requiredCount').innerText = data.requiredCount;
     
-    document.getElementById('totalFieldsCount').innerText = counts.total;
-    document.getElementById('dropdownCount').innerText = counts.dropdown;
-    document.getElementById('chipsCount').innerText = counts.chips;
-    document.getElementById('requiredCount').innerText = counts.required;
-    
-    renderFieldsList(data.fields);
-    document.getElementById('analyzeBtn').disabled = false;
-}
-
-function renderFieldsList(fields) {
     const list = document.getElementById('fieldsList');
     list.innerHTML = '';
-    fields.forEach(f => {
+    data.fields.forEach(f => {
         const item = document.createElement('div');
         item.className = 'field-item';
         
-        let typeBadge = '';
+        let typeBadge = `<span class="badge badge-text">${f.type}</span>`;
         if (f.type === 'dropdown') typeBadge = '<span class="badge badge-dropdown">Dropdown</span>';
         else if (f.type === 'multi_chip') typeBadge = '<span class="badge badge-chip">Multi-Select</span>';
-        else typeBadge = '<span class="badge badge-text">Text/Number</span>';
         
-        const optionsBadge = (f.options && f.options.length > 0) 
-            ? `<span class="badge badge-options">${f.options.length} options</span>` 
-            : '';
-            
+        let optionsHtml = '';
+        if (f.optionLabels && f.optionLabels.length > 0) {
+            const preview = f.optionLabels.slice(0, 3).join(', ');
+            const more = f.optionLabels.length > 3 ? ` +${f.optionLabels.length - 3} more` : '';
+            optionsHtml = `<div class="field-options-preview">📋 ${f.optionLabels.length} options: ${preview}${more}</div>`;
+        }
+
         item.innerHTML = `
-            <div class="field-label">${f.required ? '<span class="required-star">*</span>' : ''}${f.label}</div>
-            <div class="field-badges">${typeBadge}${optionsBadge}</div>
+            <div class="field-item-header">
+                ${f.required ? '<span class="required-star">*</span>' : ''}
+                <span class="field-name">${f.label}</span>
+                ${typeBadge}
+            </div>
+            ${optionsHtml}
         `;
         list.appendChild(item);
     });
+    document.getElementById('analyzeBtn').disabled = false;
 }
 
 async function onAnalyzeClick() {
@@ -233,99 +201,97 @@ async function onAnalyzeClick() {
 function displayResults(results, fields) {
     document.getElementById('analyzeLoading').style.display = 'none';
     const form = document.getElementById('resultsForm');
-    form.style.display = 'block';
     form.innerHTML = '';
+    form.style.display = 'block';
     document.getElementById('step3Buttons').style.display = 'flex';
 
     fields.forEach(f => {
-        if (f.type === 'file') return;
+        if (f.type === 'file_upload') return;
+        const val = results[f.label];
+        const group = document.createElement('div');
+        group.className = 'result-group';
         
-        const resValue = results[f.label];
-        const div = document.createElement('div');
-        div.className = 'result-field';
-        div.innerHTML = `<label>${f.label}</label>`;
+        const label = document.createElement('label');
+        label.className = 'result-label';
+        label.textContent = f.label + (f.required ? ' *' : '');
+        group.appendChild(label);
         
-        if (f.type === 'dropdown' && f.options && f.options.length > 0) {
+        if (f.type === 'dropdown' && f.optionLabels?.length > 0) {
             const select = document.createElement('select');
+            select.className = 'result-select';
             select.dataset.label = f.label;
-            f.options.forEach(opt => {
+            f.optionLabels.forEach(opt => {
                 const o = document.createElement('option');
-                o.value = opt.label;
-                o.text = opt.label;
-                if (opt.label === resValue) o.selected = true;
+                o.value = opt;
+                o.text = opt;
+                if (opt === val) o.selected = true;
                 select.appendChild(o);
             });
-            div.appendChild(select);
-        } else if (f.type === 'multi_chip' && f.options && f.options.length > 0) {
+            group.appendChild(select);
+        } else if (f.type === 'multi_chip' && f.optionLabels?.length > 0) {
             const chipsDiv = document.createElement('div');
-            chipsDiv.className = 'chips-editor';
-            const selected = Array.isArray(resValue) ? resValue : [resValue];
-            f.options.forEach((opt, idx) => {
-                const id = `chip_${f.fieldId}_${idx}`;
-                const checked = selected.includes(opt.label) ? 'checked' : '';
-                chipsDiv.innerHTML += `
-                    <input type="checkbox" id="${id}" class="chip-checkbox" value="${opt.label}" ${checked} data-field="${f.label}">
-                    <label for="${id}" class="chip-label">${opt.label}</label>
-                `;
+            chipsDiv.className = 'result-chips';
+            chipsDiv.dataset.label = f.label;
+            const selected = Array.isArray(val) ? val : [val];
+            f.optionLabels.forEach(opt => {
+                const l = document.createElement('label');
+                l.className = 'chip-option';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.value = opt;
+                cb.checked = selected.includes(opt);
+                l.appendChild(cb);
+                l.appendChild(document.createTextNode(' ' + opt));
+                chipsDiv.appendChild(l);
             });
-            div.appendChild(chipsDiv);
+            group.appendChild(chipsDiv);
         } else if (f.type === 'textarea') {
-            const textarea = document.createElement('textarea');
-            textarea.dataset.label = f.label;
-            textarea.rows = 3;
-            textarea.value = resValue || '';
-            div.appendChild(textarea);
+            const ta = document.createElement('textarea');
+            ta.className = 'result-textarea';
+            ta.dataset.label = f.label;
+            ta.value = val || '';
+            ta.rows = 3;
+            group.appendChild(ta);
         } else {
             const input = document.createElement('input');
+            input.className = 'result-input';
             input.type = f.type === 'number_input' ? 'number' : 'text';
             input.dataset.label = f.label;
-            input.value = resValue || '';
-            div.appendChild(input);
+            input.value = val || '';
+            group.appendChild(input);
         }
-        form.appendChild(div);
+        form.appendChild(group);
     });
 }
 
 function collectEditedResults() {
     const results = {};
     const form = document.getElementById('resultsForm');
-    
-    // Inputs, Selects, Textareas
-    form.querySelectorAll('input:not(.chip-checkbox), select, textarea').forEach(el => {
-        results[el.dataset.label] = el.value;
+    form.querySelectorAll('input:not([type="checkbox"]), select, textarea').forEach(el => {
+        if (el.dataset.label) results[el.dataset.label] = el.value;
     });
-    
-    // Chips
-    const chips = {};
-    form.querySelectorAll('.chip-checkbox:checked').forEach(el => {
-        const label = el.dataset.field;
-        if (!chips[label]) chips[label] = [];
-        chips[label].push(el.value);
+    form.querySelectorAll('.result-chips').forEach(container => {
+        const label = container.dataset.label;
+        results[label] = Array.from(container.querySelectorAll('input:checked')).map(cb => cb.value);
     });
-    
-    Object.assign(results, chips);
     return results;
 }
 
 async function onFillClick() {
-    const editedResults = collectEditedResults();
+    const data = collectEditedResults();
     goToStep(4);
-    
     document.getElementById('fillReport').style.display = 'none';
     document.getElementById('fillProgress').style.display = 'block';
-    document.getElementById('startOverBtn').style.display = 'none';
-    updateProgress(0, scrapedFields.length, 'Starting...');
 
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        chrome.tabs.sendMessage(tab.id, {
+        chrome.tabs.sendMessage(tabs[0].id, {
             action: 'FILL_FORM',
-            data: editedResults,
+            data,
             fields: scrapedFields,
             images: uploadedImages.map(img => img.base64)
         }, (response) => {
             if (chrome.runtime.lastError || !response || !response.success) {
-                showToast('Filling failed', 'error');
+                showToast('Fill failed', 'error');
                 goToStep(3);
                 return;
             }
@@ -334,12 +300,14 @@ async function onFillClick() {
     });
 }
 
-function updateProgress(current, total, fieldName) {
-    const percent = Math.round((current / total) * 100);
-    document.getElementById('progressPercent').innerText = `${percent}%`;
-    document.getElementById('progressBar').style.width = `${percent}%`;
-    document.getElementById('progressFieldName').innerText = fieldName || '';
-}
+chrome.runtime.onMessage.addListener((request) => {
+    if (request.action === 'FILL_PROGRESS') {
+        const percent = Math.round((request.current / request.total) * 100);
+        document.getElementById('progressPercent').innerText = `${percent}%`;
+        document.getElementById('progressBar').style.width = `${percent}%`;
+        document.getElementById('progressFieldName').innerText = request.fieldName || '';
+    }
+});
 
 function showFillReport(report) {
     document.getElementById('fillProgress').style.display = 'none';
@@ -347,83 +315,44 @@ function showFillReport(report) {
     reportDiv.style.display = 'block';
     document.getElementById('startOverBtn').style.display = 'block';
     
-    reportDiv.innerHTML = `
-        <div class="section-title">Filling Summary</div>
-        <div class="fields-summary">
-            <div class="summary-card"><span class="summary-number">${report.filled}</span><span class="summary-label">Filled</span></div>
-            <div class="summary-card"><span class="summary-number" style="color:var(--error)">${report.failed}</span><span class="summary-label">Failed</span></div>
-            <div class="summary-card"><span class="summary-number" style="color:var(--text-light)">${report.skipped}</span><span class="summary-label">Skipped</span></div>
-        </div>
-    `;
-    
-    const detailsList = document.createElement('div');
+    reportDiv.innerHTML = `<div class="section-title">Summary: ${report.filled}/${report.totalFields} Filled</div>`;
     report.details.forEach(d => {
         const item = document.createElement('div');
         item.className = 'report-item';
-        const icon = d.status === 'filled' ? '✅' : (d.status === 'failed' ? '❌' : '⏭️');
-        item.innerHTML = `
-            <div class="report-icon">${icon}</div>
-            <div class="report-info">
-                <div class="report-label">${d.label}</div>
-                <div class="report-status">${d.status === 'failed' ? d.reason : (d.value || d.status)}</div>
-            </div>
-        `;
-        detailsList.appendChild(item);
+        const icon = d.status === 'filled' ? '✅' : '❌';
+        item.innerHTML = `<span>${icon}</span><div class="report-info"><div class="report-label">${d.label}</div><div class="report-status">${d.reason || d.status}</div></div>`;
+        reportDiv.appendChild(item);
     });
-    reportDiv.appendChild(detailsList);
 }
 
 function saveToHistory(results, thumb) {
-    chrome.storage.local.get({ listingHistory: [] }, (data) => {
-        const history = data.listingHistory;
-        history.unshift({ id: Date.now(), results, thumb, timestamp: new Date().toLocaleString() });
-        if (history.length > 15) history.pop();
-        chrome.storage.local.set({ listingHistory: history });
+    chrome.storage.local.get({ history: [] }, (data) => {
+        const history = [{ id: Date.now(), results, thumb, date: new Date().toLocaleString() }, ...data.history].slice(0, 20);
+        chrome.storage.local.set({ history });
     });
 }
 
 function loadHistory() {
-    chrome.storage.local.get({ listingHistory: [] }, (data) => {
+    chrome.storage.local.get({ history: [] }, (data) => {
         const list = document.getElementById('historyList');
-        if (data.listingHistory.length === 0) {
-            list.innerHTML = '<p class="empty-text">No previous listings found.</p>';
-            return;
-        }
+        if (data.history.length === 0) { list.innerHTML = '<p class="empty-text">No history.</p>'; return; }
         list.innerHTML = '';
-        data.listingHistory.forEach(item => {
+        data.history.forEach(item => {
             const div = document.createElement('div');
             div.className = 'history-item';
-            div.innerHTML = `
-                <img src="${item.thumb || 'icons/icon48.png'}" class="history-thumb">
-                <div class="history-info">
-                    <div class="history-name">${item.results[Object.keys(item.results)[0]] || 'Untitled Product'}</div>
-                    <div class="history-meta">${item.timestamp}</div>
-                </div>
-            `;
-            div.onclick = () => {
-                analysisResults = item.results;
-                scrapedFields = Object.keys(item.results).map(label => ({ label, type: 'text_input' })); // Basic fallback
-                // Better history loading would store fields structure too, but for simplicity:
-                showToast('Loading results from history...', 'info');
-                document.querySelector('[data-tab="listing"]').click();
-                goToStep(3);
-                displayResults(item.results, scrapedFields);
-            };
+            div.innerHTML = `<img src="${item.thumb || ''}" class="history-thumb"><div class="history-info"><div class="history-name">${item.results[Object.keys(item.results)[0]] || 'Listing'}</div><div class="history-meta">${item.date}</div></div>`;
+            div.onclick = () => { analysisResults = item.results; goToStep(3); displayResults(item.results, scrapedFields || []); };
             list.appendChild(div);
         });
     });
 }
 
-function clearHistory() {
-    if (confirm('Clear all history?')) {
-        chrome.storage.local.set({ listingHistory: [] }, loadHistory);
-    }
-}
+function clearHistory() { if (confirm('Clear history?')) chrome.storage.local.set({ history: [] }, loadHistory); }
 
 function showToast(msg, type) {
     const t = document.getElementById('toast');
     t.innerText = msg;
-    t.style.background = type === 'error' ? '#F44336' : (type === 'success' ? '#4CAF50' : '#333');
+    t.style.background = type === 'error' ? '#F44336' : '#333';
     t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 3000);
 }
