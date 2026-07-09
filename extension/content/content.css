@@ -3,3 +3,44 @@
     border: 2px solid #9C27B0 !important;
     background-color: rgba(156, 39, 176, 0.05) !important;
 }
+
+#meeshoAutoListerIndicator {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: #9C27B0;
+  color: white;
+  padding: 10px 18px;
+  border-radius: 25px;
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+  z-index: 999999;
+  box-shadow: 0 4px 15px rgba(156, 39, 176, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s ease;
+  max-width: 300px;
+}
+
+#meeshoAutoListerIndicator.success {
+  background: #4CAF50;
+  box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+}
+
+#meeshoAutoListerIndicator.error {
+  background: #F44336;
+}
+
+.mal-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: malSpin 0.8s linear infinite;
+}
+
+@keyframes malSpin {
+  to { transform: rotate(360deg); }
+}
