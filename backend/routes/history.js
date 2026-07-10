@@ -1,12 +1,16 @@
 import express from 'express';
 import { db } from '../lib/firebase.js';
+import { authenticateUser } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Apply authentication middleware to all history routes
+router.use(authenticateUser);
 
 // Get history for current user
 router.get('/', async (req, res) => {
     try {
-        const { user } = req;
+        const { user } = req; // decoded token from middleware
         const snapshot = await db.collection('history')
             .where('userId', '==', user.uid)
             .orderBy('timestamp', 'desc')

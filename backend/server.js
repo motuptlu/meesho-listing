@@ -10,6 +10,7 @@ import { admin, db, storage } from './lib/firebase.js';
 import analyzeRouter from './routes/analyze.js';
 import historyRouter from './routes/history.js';
 import authRouter from './routes/auth.js';
+import { authenticateUser } from './middleware/auth.js';
 
 dotenv.config();
 
@@ -21,40 +22,6 @@ app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// Auth Middleware
-export const authenticateUser = async (req, res, next) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    const idToken = authHeader.split('Bearer ')[1];
-    try {
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
-        req.user = decodedToken;
-        next();
-    } catch (error) {
-        // Fallback for Google Access Tokens (from chrome.identity)
-        try {
-            const googleRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${idToken}`);
-            if (!googleRes.ok) throw new Error('Invalid Google Token');
-            
-            const profile = await googleRes.json();
-            req.user = {
-                uid: profile.sub,
-                email: profile.email,
-                name: profile.name,
-                picture: profile.picture,
-                firebase: false
-            };
-            next();
-        } catch (err) {
-            console.error('Auth Error:', error);
-            res.status(401).json({ success: false, error: 'Invalid token' });
-        }
-    }
-};
 
 // Routes
 app.use('/api/analyze', authenticateUser, analyzeRouter);
