@@ -1,0 +1,34 @@
+{
+  "collections": [
+    {
+      "name": "users",
+      "documents": [
+        {
+          "fields": {
+            "uid": "string",
+            "email": "string",
+            "displayName": "string",
+            "photoURL": "string",
+            "quota": "number",
+            "createdAt": "timestamp",
+            "lastLogin": "timestamp"
+          }
+        }
+      ]
+    },
+    {
+      "name": "history",
+      "documents": [
+        {
+          "fields": {
+            "userId": "string",
+            "productName": "string",
+            "timestamp": "timestamp",
+            "results": "map",
+            "thumbnail": "string"
+          }
+        }
+      ]
+    }
+  ]
+}

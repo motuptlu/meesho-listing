@@ -1,46 +1,49 @@
-/* Content Script Styles */
-.meesho-lister-highlight {
-    border: 2px solid #9C27B0 !important;
-    background-color: rgba(156, 39, 176, 0.05) !important;
+/* MEESHO AUTO LISTER - CONTENT STYLES */
+
+.meesho-automation-highlight {
+    outline: 3px solid #9C27B0 !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 15px rgba(156, 39, 176, 0.4) !important;
+    transition: all 0.2s ease-in-out !important;
 }
 
-#meeshoAutoListerIndicator {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  background: #9C27B0;
-  color: white;
-  padding: 10px 18px;
-  border-radius: 25px;
-  font-size: 13px;
-  font-family: system-ui, sans-serif;
-  z-index: 999999;
-  box-shadow: 0 4px 15px rgba(156, 39, 176, 0.4);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  transition: all 0.3s ease;
-  max-width: 300px;
+#meesho-toast {
+    all: initial;
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    background: #9C27B0;
+    color: white;
+    padding: 14px 28px;
+    border-radius: 50px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 2147483647;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(0);
+    opacity: 1;
 }
 
-#meeshoAutoListerIndicator.success {
-  background: #4CAF50;
-  box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+@keyframes mal-spin {
+    to { transform: rotate(360deg); }
 }
 
-#meeshoAutoListerIndicator.error {
-  background: #F44336;
+.loader-spinner {
+    width: 18px;
+    height: 18px;
+    border: 3px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: mal-spin 0.8s linear infinite;
 }
 
-.mal-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255,255,255,0.4);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: malSpin 0.8s linear infinite;
-}
-
-@keyframes malSpin {
-  to { transform: rotate(360deg); }
+/* Ensure toast is readable even on dark backgrounds */
+#meesho-toast span {
+    color: white !important;
+    font-size: 14px !important;
 }

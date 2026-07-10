@@ -1,6 +1,6 @@
 {
-  "name": "Meesho Auto Lister",
-  "description": "Chrome Extension for automated Meesho product listing using Gemini AI",
+  "name": "Meesho Auto Lister AI",
+  "description": "Production-ready AI-powered automation assistant for Meesho Supplier Panel with dropdown support, persistence, and history.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

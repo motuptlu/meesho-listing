@@ -1,332 +1,403 @@
-const BACKEND_URL = 'http://localhost:3000';
-let uploadedImages = [];
-let scrapedFields = null;
-let analysisResults = null;
-let currentStep = 1;
+/**
+ * MEESHO AUTO LISTER - POPUP CONTROLLER
+ * Manages UI, Auth, and Automation Workflow
+ */
 
-document.addEventListener('DOMContentLoaded', () => {
-    init();
-});
+const BACKEND_URL = 'http://localhost:3000'; // Replace with production URL if deployed
 
-function init() {
-    const scanBtn = document.getElementById('scanBtn');
-    const analyzeBtn = document.getElementById('analyzeBtn');
-    const fillBtn = document.getElementById('fillBtn');
-    const imageInput = document.getElementById('imageInput');
-    const uploadZone = document.getElementById('uploadZone');
-
-    // Tab Logic
-    const tabBtns = document.querySelectorAll('.tab-btn');
-    tabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            tabBtns.forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById(`${btn.dataset.tab}View`).classList.add('active');
-            if (btn.dataset.tab === 'history') loadHistory();
-        });
-    });
-
-    // Step Logic
-    scanBtn.addEventListener('click', onScanClick);
-    analyzeBtn.addEventListener('click', onAnalyzeClick);
-    fillBtn.addEventListener('click', onFillClick);
-    
-    document.getElementById('backBtn2').addEventListener('click', () => goToStep(1));
-    document.getElementById('backBtn3').addEventListener('click', () => goToStep(2));
-    document.getElementById('startOverBtn').addEventListener('click', () => location.reload());
-    document.getElementById('clearHistoryBtn').addEventListener('click', clearHistory);
-
-    // Upload Logic
-    uploadZone.addEventListener('click', () => imageInput.click());
-    uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.style.borderColor = '#9C27B0'; });
-    uploadZone.addEventListener('dragleave', () => { uploadZone.style.borderColor = ''; });
-    uploadZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadZone.style.borderColor = '';
-        handleFiles(e.dataTransfer.files);
-    });
-    imageInput.addEventListener('change', (e) => handleFiles(e.target.files));
-
-    checkPage();
-}
-
-function checkPage() {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        const dot = document.getElementById('statusDot');
-        if (tab && tab.url.includes('supplier.meesho.com')) {
-            dot.className = 'status-dot connected';
-            dot.title = 'Connected to Meesho';
-        } else {
-            dot.className = 'status-dot disconnected';
-            dot.title = 'Open Meesho Listing Page';
-        }
-    });
-}
-
-function handleFiles(files) {
-    const fileList = Array.from(files);
-    if (uploadedImages.length + fileList.length > 5) {
-        showToast('Max 5 images allowed', 'error');
-        return;
+class PopupController {
+    constructor() {
+        this.state = null;
+        this.uploadedImages = [];
+        this.scrapedFields = [];
+        this.analysisResults = null;
+        this.currentStep = 1;
+        
+        this.init();
     }
-    fileList.forEach(file => {
-        if (!file.type.startsWith('image/')) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            uploadedImages.push({ file: file, base64: e.target.result });
-            renderPreviews();
-            document.getElementById('scanBtn').disabled = false;
-        };
-        reader.readAsDataURL(file);
-    });
-}
 
-function renderPreviews() {
-    const grid = document.getElementById('imageGrid');
-    grid.innerHTML = '';
-    uploadedImages.forEach((img, idx) => {
-        const div = document.createElement('div');
-        div.className = 'preview-item';
-        div.innerHTML = `<img src="${img.base64}"><button class="remove-btn">×</button>`;
-        div.querySelector('.remove-btn').onclick = () => {
-            uploadedImages.splice(idx, 1);
-            renderPreviews();
-            if (uploadedImages.length === 0) document.getElementById('scanBtn').disabled = true;
-        };
-        grid.appendChild(div);
-    });
-}
+    async init() {
+        await this.loadStateFromBackground();
+        this.setupEventListeners();
+        this.render();
+        this.checkAuth();
+        this.checkMeeshoPage();
+    }
 
-function goToStep(n) {
-    currentStep = n;
-    document.querySelectorAll('.step-content').forEach(c => c.classList.remove('active'));
-    document.getElementById(`step${n}`).classList.add('active');
-    
-    document.querySelectorAll('.step').forEach((s, i) => {
-        s.classList.remove('active', 'complete');
-        if (i + 1 === n) s.classList.add('active');
-        else if (i + 1 < n) s.classList.add('complete');
-    });
-}
-
-async function onScanClick() {
-    goToStep(2);
-    document.getElementById('scanStatus').style.display = 'flex';
-    document.getElementById('fieldsSummary').style.display = 'none';
-    document.getElementById('fieldsList').innerHTML = '';
-
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        chrome.tabs.sendMessage(tabs[0].id, { action: 'SCRAPE_FORM' }, (response) => {
-            if (chrome.runtime.lastError || !response || !response.success) {
-                showToast('Scan failed. Refresh Meesho tab.', 'error');
-                goToStep(1);
-                return;
-            }
-            displayScanResults(response);
+    async loadStateFromBackground() {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage({ action: 'GET_STATE' }, (response) => {
+                this.state = response;
+                if (this.state?.currentListing) {
+                    const cl = this.state.currentListing;
+                    this.uploadedImages = cl.images || [];
+                    this.scrapedFields = cl.scrapedFields || [];
+                    this.analysisResults = cl.analysisResults || null;
+                }
+                resolve();
+            });
         });
-    });
-}
+    }
 
-function displayScanResults(data) {
-    scrapedFields = data.fields;
-    document.getElementById('scanStatus').style.display = 'none';
-    document.getElementById('fieldsSummary').style.display = 'grid';
-    
-    document.getElementById('totalFieldsCount').innerText = data.totalFields;
-    document.getElementById('dropdownCount').innerText = data.dropdownCount;
-    document.getElementById('chipsCount').innerText = data.chipCount;
-    document.getElementById('requiredCount').innerText = data.requiredCount;
-    
-    const list = document.getElementById('fieldsList');
-    list.innerHTML = '';
-    data.fields.forEach(f => {
-        const item = document.createElement('div');
-        item.className = 'field-item';
-        
-        let typeBadge = `<span class="badge badge-text">${f.type}</span>`;
-        if (f.type === 'dropdown') typeBadge = '<span class="badge badge-dropdown">Dropdown</span>';
-        else if (f.type === 'multi_chip') typeBadge = '<span class="badge badge-chip">Multi-Select</span>';
-        
-        let optionsHtml = '';
-        if (f.optionLabels && f.optionLabels.length > 0) {
-            const preview = f.optionLabels.slice(0, 3).join(', ');
-            const more = f.optionLabels.length > 3 ? ` +${f.optionLabels.length - 3} more` : '';
-            optionsHtml = `<div class="field-options-preview">📋 ${f.optionLabels.length} options: ${preview}${more}</div>`;
+    saveStateToBackground() {
+        chrome.runtime.sendMessage({
+            action: 'SAVE_LISTING',
+            data: {
+                images: this.uploadedImages,
+                scrapedFields: this.scrapedFields,
+                analysisResults: this.analysisResults
+            }
+        });
+    }
+
+    setupEventListeners() {
+        // Auth
+        document.getElementById('loginBtn').addEventListener('click', () => this.handleLogin());
+        document.getElementById('logoutBtn').addEventListener('click', () => this.handleLogout());
+
+        // Navigation
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
+        });
+
+        // Step 1
+        document.getElementById('dropZone').addEventListener('click', () => document.getElementById('fileInput').click());
+        document.getElementById('fileInput').addEventListener('change', (e) => this.handleFileSelect(e));
+        document.getElementById('scanBtn').addEventListener('click', () => this.handleScanAndAnalyze());
+
+        // Step 2
+        document.getElementById('backTo1').addEventListener('click', () => this.goToStep(1));
+        document.getElementById('startFillBtn').addEventListener('click', () => this.handleStartFill());
+
+        // Step 3
+        document.getElementById('cancelFillBtn').addEventListener('click', () => this.handleCancelFill());
+        document.getElementById('finishBtn').addEventListener('click', () => this.handleFinish());
+
+        // Listen for progress from background
+        chrome.runtime.onMessage.addListener((message) => {
+            if (message.action === 'FILL_PROGRESS') {
+                this.updateProgress(message);
+            }
+        });
+    }
+
+    // --- AUTH ---
+
+    async checkAuth() {
+        if (this.state?.user) {
+            this.showView('mainView');
+            this.updateUserUI();
+        } else {
+            this.showView('authView');
         }
+    }
 
-        item.innerHTML = `
-            <div class="field-item-header">
-                ${f.required ? '<span class="required-star">*</span>' : ''}
-                <span class="field-name">${f.label}</span>
-                ${typeBadge}
-            </div>
-            ${optionsHtml}
-        `;
-        list.appendChild(item);
-    });
-    document.getElementById('analyzeBtn').disabled = false;
-}
+    handleLogin() {
+        chrome.runtime.sendMessage({ action: 'AUTH_LOGIN' }, (response) => {
+            if (response.success) {
+                this.state.user = response.user;
+                this.showView('mainView');
+                this.updateUserUI();
+                this.showToast('Logged in successfully', 'success');
+            } else {
+                this.showToast('Login failed: ' + response.error, 'error');
+            }
+        });
+    }
 
-async function onAnalyzeClick() {
-    goToStep(3);
-    document.getElementById('analyzeLoading').style.display = 'block';
-    document.getElementById('resultsForm').style.display = 'none';
-    document.getElementById('step3Buttons').style.display = 'none';
+    handleLogout() {
+        chrome.runtime.sendMessage({ action: 'AUTH_LOGOUT' }, () => {
+            this.state.user = null;
+            this.showView('authView');
+        });
+    }
 
-    const formData = new FormData();
-    uploadedImages.forEach(img => formData.append('images', img.file));
-    formData.append('formFields', JSON.stringify({ fields: scrapedFields }));
+    updateUserUI() {
+        const user = this.state.user;
+        if (!user) return;
+        document.getElementById('userName').innerText = user.name || user.email;
+        document.getElementById('userAvatar').src = user.picture || 'https://www.gravatar.com/avatar/?d=mp';
+    }
 
-    try {
+    // --- WORKFLOW ---
+
+    handleFileSelect(e) {
+        const files = Array.from(e.target.files);
+        this.processFiles(files);
+    }
+
+    processFiles(files) {
+        files.forEach(file => {
+            if (!file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                this.uploadedImages.push(e.target.result);
+                this.renderImagePreviews();
+                this.saveStateToBackground();
+                document.getElementById('scanBtn').disabled = false;
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    renderImagePreviews() {
+        const grid = document.getElementById('imagePreviewGrid');
+        grid.innerHTML = '';
+        this.uploadedImages.forEach((img, idx) => {
+            const div = document.createElement('div');
+            div.className = 'preview-item';
+            div.innerHTML = `
+                <img src="${img}">
+                <button class="remove-btn" data-idx="${idx}">×</button>
+            `;
+            div.querySelector('.remove-btn').onclick = () => {
+                this.uploadedImages.splice(idx, 1);
+                this.renderImagePreviews();
+                this.saveStateToBackground();
+                if (this.uploadedImages.length === 0) document.getElementById('scanBtn').disabled = true;
+            };
+            grid.appendChild(div);
+        });
+    }
+
+    async handleScanAndAnalyze() {
+        this.goToStep(2);
+        this.showLoadingForm();
+
+        try {
+            // 1. Scan Form on Page
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const response = await this.sendMessageToTab(tabs[0].id, { action: 'SCRAPE_FORM' });
+            
+            if (!response.success) throw new Error(response.error || 'Failed to scan form');
+            this.scrapedFields = response.fields;
+
+            // 2. Send to Backend for AI Analysis
+            const aiResults = await this.callAnalyzeAPI();
+            this.analysisResults = aiResults;
+            
+            this.renderAnalysisForm();
+            this.saveStateToBackground();
+        } catch (err) {
+            this.showToast(err.message, 'error');
+            this.goToStep(1);
+        }
+    }
+
+    async callAnalyzeAPI() {
+        const formData = new FormData();
+        
+        // Convert base64 to blobs
+        for (let i = 0; i < this.uploadedImages.length; i++) {
+            const blob = await (await fetch(this.uploadedImages[i])).blob();
+            formData.append('images', blob, `img_${i}.jpg`);
+        }
+        
+        formData.append('formFields', JSON.stringify({ fields: this.scrapedFields }));
+
         const res = await fetch(`${BACKEND_URL}/api/analyze`, {
             method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.state.user.token}`
+            },
             body: formData
         });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Server Analysis Failed');
+        }
+
         const data = await res.json();
-        if (data.success) {
-            analysisResults = data.results;
-            displayResults(data.results, scrapedFields);
-            saveToHistory(data.results, uploadedImages[0]?.base64);
-        } else {
-            throw new Error(data.error || 'Analysis failed');
-        }
-    } catch (err) {
-        showToast(err.message, 'error');
-        goToStep(2);
+        return data.results;
     }
-}
 
-function displayResults(results, fields) {
-    document.getElementById('analyzeLoading').style.display = 'none';
-    const form = document.getElementById('resultsForm');
-    form.innerHTML = '';
-    form.style.display = 'block';
-    document.getElementById('step3Buttons').style.display = 'flex';
+    renderAnalysisForm() {
+        const form = document.getElementById('analysisForm');
+        form.innerHTML = '';
+        document.getElementById('fieldsCount').innerText = `${this.scrapedFields.length} Fields`;
 
-    fields.forEach(f => {
-        if (f.type === 'file_upload') return;
-        const val = results[f.label];
-        const group = document.createElement('div');
-        group.className = 'result-group';
-        
-        const label = document.createElement('label');
-        label.className = 'result-label';
-        label.textContent = f.label + (f.required ? ' *' : '');
-        group.appendChild(label);
-        
-        const input = document.createElement('input');
-        input.className = 'result-input';
-        input.type = 'text';
-        input.dataset.label = f.label;
-        input.value = Array.isArray(val) ? val.join(', ') : (val || '');
-        group.appendChild(input);
-        
-        form.appendChild(group);
-    });
-}
-
-function collectEditedResults() {
-    const results = {};
-    const form = document.getElementById('resultsForm');
-    form.querySelectorAll('input').forEach(el => {
-        if (el.dataset.label) {
-            const val = el.value.trim();
-            // If it looks like a comma separated list (for multi-chips), split it
-            if (val.includes(',') && val.split(',').length > 1) {
-                results[el.dataset.label] = val.split(',').map(v => v.trim());
-            } else {
-                results[el.dataset.label] = val;
-            }
-        }
-    });
-    return results;
-}
-
-async function onFillClick() {
-    const data = collectEditedResults();
-    goToStep(4);
-    document.getElementById('fillReport').style.display = 'none';
-    document.getElementById('fillProgress').style.display = 'block';
-
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs || tabs.length === 0) {
-            showToast('No active Meesho tab found', 'error');
-            goToStep(3);
-            return;
-        }
-
-        chrome.tabs.sendMessage(tabs[0].id, {
-            action: 'FILL_FORM',
-            data,
-            fields: scrapedFields,
-            images: uploadedImages.map(img => img.base64)
-        }, (response) => {
-            if (chrome.runtime.lastError || !response || !response.success) {
-                console.error('Fill error:', chrome.runtime.lastError);
-                showToast('Fill failed. Refresh Meesho and try again.', 'error');
-                goToStep(3);
-                return;
-            }
-            showFillReport(response.report);
-        });
-    });
-}
-
-chrome.runtime.onMessage.addListener((request) => {
-    if (request.action === 'FILL_PROGRESS') {
-        const percent = Math.round((request.current / request.total) * 100);
-        document.getElementById('progressPercent').innerText = `${percent}%`;
-        document.getElementById('progressBar').style.width = `${percent}%`;
-        document.getElementById('progressFieldName').innerText = request.fieldName || '';
-    }
-});
-
-function showFillReport(report) {
-    document.getElementById('fillProgress').style.display = 'none';
-    const reportDiv = document.getElementById('fillReport');
-    reportDiv.style.display = 'block';
-    document.getElementById('startOverBtn').style.display = 'block';
-    
-    reportDiv.innerHTML = `<div class="section-title">Summary: ${report.filled}/${report.totalFields} Filled</div>`;
-    report.details.forEach(d => {
-        const item = document.createElement('div');
-        item.className = 'report-item';
-        const icon = d.status === 'filled' ? '✅' : '❌';
-        item.innerHTML = `<span>${icon}</span><div class="report-info"><div class="report-label">${d.label}</div><div class="report-status">${d.reason || d.status}</div></div>`;
-        reportDiv.appendChild(item);
-    });
-}
-
-function saveToHistory(results, thumb) {
-    chrome.storage.local.get({ history: [] }, (data) => {
-        const history = [{ id: Date.now(), results, thumb, date: new Date().toLocaleString() }, ...data.history].slice(0, 20);
-        chrome.storage.local.set({ history });
-    });
-}
-
-function loadHistory() {
-    chrome.storage.local.get({ history: [] }, (data) => {
-        const list = document.getElementById('historyList');
-        if (data.history.length === 0) { list.innerHTML = '<p class="empty-text">No history.</p>'; return; }
-        list.innerHTML = '';
-        data.history.forEach(item => {
+        this.scrapedFields.forEach(field => {
+            const val = this.analysisResults[field.label] || '';
             const div = document.createElement('div');
-            div.className = 'history-item';
-            div.innerHTML = `<img src="${item.thumb || ''}" class="history-thumb"><div class="history-info"><div class="history-name">${item.results[Object.keys(item.results)[0]] || 'Listing'}</div><div class="history-meta">${item.date}</div></div>`;
-            div.onclick = () => { analysisResults = item.results; goToStep(3); displayResults(item.results, scrapedFields || []); };
-            list.appendChild(div);
+            div.className = 'field-group';
+            div.innerHTML = `
+                <label>${field.label}</label>
+                ${field.type === 'textarea' 
+                    ? `<textarea data-label="${field.label}">${val}</textarea>`
+                    : `<input type="text" data-label="${field.label}" value="${val}">`
+                }
+            `;
+            form.appendChild(div);
         });
-    });
+    }
+
+    async handleStartFill() {
+        // Collect edited values
+        const editedResults = {};
+        document.querySelectorAll('#analysisForm [data-label]').forEach(el => {
+            editedResults[el.dataset.label] = el.value;
+        });
+        this.analysisResults = editedResults;
+        this.saveStateToBackground();
+
+        this.goToStep(3);
+        this.addLog('🚀 Starting Automation Engine...', 'info');
+
+        try {
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            chrome.tabs.sendMessage(tabs[0].id, {
+                action: 'FILL_FORM',
+                data: this.analysisResults,
+                fields: this.scrapedFields,
+                images: this.uploadedImages
+            }, (response) => {
+                if (chrome.runtime.lastError || !response || !response.success) {
+                    this.addLog('❌ Error: Content script disconnected or failed', 'error');
+                } else {
+                    this.addLog('✨ Automation Complete!', 'success');
+                    document.getElementById('finishBtn').classList.remove('hidden');
+                }
+            });
+        } catch (err) {
+            this.addLog(`❌ Error: ${err.message}`, 'error');
+        }
+    }
+
+    // --- UI HELPERS ---
+
+    goToStep(n) {
+        this.currentStep = n;
+        document.querySelectorAll('.step-view').forEach(v => v.classList.remove('active'));
+        document.getElementById(`step${n}`).classList.add('active');
+        
+        document.querySelectorAll('.step').forEach(s => {
+            const sNum = parseInt(s.dataset.step);
+            s.classList.remove('active', 'complete');
+            if (sNum === n) s.classList.add('active');
+            else if (sNum < n) s.classList.add('complete');
+        });
+    }
+
+    switchTab(tab) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        
+        document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add('active');
+        document.getElementById(`${tab}Tab`).classList.add('active');
+        
+        if (tab === 'history') this.loadHistory();
+    }
+
+    async loadHistory() {
+        const list = document.getElementById('historyList');
+        list.innerHTML = '<div class="loading">Loading history...</div>';
+
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/history`, {
+                headers: { 'Authorization': `Bearer ${this.state.user.token}` }
+            });
+            const data = await res.json();
+            
+            if (data.success && data.history.length > 0) {
+                list.innerHTML = '';
+                data.history.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'history-item';
+                    div.innerHTML = `
+                        <img src="data:image/jpeg;base64,${item.thumbnail}" class="history-thumb">
+                        <div class="history-info">
+                            <div class="history-name">${item.productName}</div>
+                            <div class="history-meta">${new Date(item.timestamp).toLocaleDateString()}</div>
+                        </div>
+                    `;
+                    div.onclick = () => {
+                        this.analysisResults = item.results;
+                        this.goToStep(2);
+                        this.renderAnalysisForm();
+                        this.switchTab('create');
+                    };
+                    list.appendChild(div);
+                });
+            } else {
+                list.innerHTML = '<div class="empty-text">No history found.</div>';
+            }
+        } catch (err) {
+            list.innerHTML = `<div class="error-text">Failed to load: ${err.message}</div>`;
+        }
+    }
+
+    updateProgress(data) {
+        const bar = document.getElementById('progressBarFill');
+        const percent = document.getElementById('progressPercent');
+        const field = document.getElementById('currentField');
+        
+        bar.style.width = `${data.current}%`;
+        percent.innerText = `${data.current}%`;
+        field.innerText = `Filling: ${data.fieldName}`;
+        
+        this.addLog(`Processing field: ${data.fieldName}`, 'success');
+    }
+
+    addLog(msg, type) {
+        const log = document.getElementById('fillLog');
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        log.appendChild(entry);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    showView(id) {
+        document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+        document.getElementById(id).classList.remove('hidden');
+    }
+
+    showLoadingForm() {
+        const form = document.getElementById('analysisForm');
+        form.innerHTML = `
+            <div class="loading-state">
+                <div class="spinner"></div>
+                <p>Gemini 2.5 is analyzing your images...</p>
+            </div>
+        `;
+    }
+
+    showToast(msg, type) {
+        const t = document.getElementById('toast');
+        t.innerText = msg;
+        t.style.background = type === 'success' ? '#4CAF50' : '#F44336';
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    async checkMeeshoPage() {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const dot = document.getElementById('statusDot');
+        if (tabs[0]?.url?.includes('supplier.meesho.com')) {
+            dot.classList.add('connected');
+        } else {
+            dot.classList.remove('connected');
+        }
+    }
+
+    async sendMessageToTab(tabId, message) {
+        return new Promise((resolve) => {
+            chrome.tabs.sendMessage(tabId, message, (response) => {
+                if (chrome.runtime.lastError) resolve({ success: false, error: 'Extension not loaded on this page' });
+                else resolve(response);
+            });
+        });
+    }
+
+    handleFinish() {
+        chrome.runtime.sendMessage({ action: 'CLEAR_STATE' }, () => {
+            window.location.reload();
+        });
+    }
 }
 
-function clearHistory() { if (confirm('Clear history?')) chrome.storage.local.set({ history: [] }, loadHistory); }
-
-function showToast(msg, type) {
-    const t = document.getElementById('toast');
-    t.innerText = msg;
-    t.style.background = type === 'error' ? '#F44336' : '#333';
-    t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 3000);
-}
+// Instantiate Controller
+document.addEventListener('DOMContentLoaded', () => {
+    window.controller = new PopupController();
+});

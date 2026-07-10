@@ -1,17 +1,19 @@
-const express = require('express');
-const multer = require('multer');
-const { GoogleGenAI } = require('@google/genai');
+import express from 'express';
+import multer from 'multer';
+import { GoogleGenAI } from '@google/genai';
+import { db } from '../server.js';
+import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
 
 // MULTER SETUP
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+  limits: { fileSize: 15 * 1024 * 1024 } // 15MB
 });
 
 // GENAI SETUP
-const ai = new GoogleGenAI({
+const ai = new GoogleGenAI({ 
   apiKey: process.env.GEMINI_API_KEY,
   httpOptions: {
     headers: {
@@ -20,8 +22,9 @@ const ai = new GoogleGenAI({
   }
 });
 
-router.post('/analyze', upload.array('images', 5), async (req, res) => {
+router.post('/', upload.array('images', 5), async (req, res) => {
   try {
+    const { user } = req;
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ success: false, error: 'No images provided' });
     }
@@ -38,26 +41,43 @@ router.post('/analyze', upload.array('images', 5), async (req, res) => {
 
     const prompt = buildDynamicPrompt(fields);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview",
+    // Using the requested model
+    const result = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
       contents: {
         parts: [
-          ...imageParts,
-          { text: prompt }
+          { text: prompt },
+          ...imageParts
         ]
-      },
-      config: {
-        responseMimeType: "application/json",
       }
     });
 
-    const text = response.text;
+    const response = result;
+    let text = response.text;
+    
+    // Clean potential markdown code blocks
+    text = text.replace(/```json\n?|```/g, '').trim();
+    
     const results = JSON.parse(text);
-
-    // Validate and clean
     const cleanedResults = validateResults(results, fields);
 
-    res.json({ success: true, results: cleanedResults });
+    // Auto-save to history
+    const historyId = uuidv4();
+    const historyData = {
+      userId: user.uid,
+      results: cleanedResults,
+      timestamp: new Date().toISOString(),
+      productName: cleanedResults['Product Name'] || cleanedResults['Title'] || 'Untitled Product',
+      thumbnail: imageParts[0].inlineData.data // Store small thumbnail
+    };
+
+    await db.collection('history').doc(historyId).set(historyData);
+
+    res.json({ 
+      success: true, 
+      results: cleanedResults,
+      historyId
+    });
 
   } catch (error) {
     console.error('Analysis error:', error);
@@ -66,42 +86,37 @@ router.post('/analyze', upload.array('images', 5), async (req, res) => {
 });
 
 function buildDynamicPrompt(fields) {
-  let prompt = `You are an expert Meesho product listing assistant. 
-Analyze the provided product images and fill out the listing form.
+  let prompt = `You are a Senior Meesho Listing Specialist. 
+Analyze these product images and extract accurate data for the Meesho Supplier Panel.
 
-CRITICAL RULES:
-1. For fields with OPTIONS, you MUST choose ONLY from the provided list.
-2. For multiple select, return an array of strings from the options.
-3. For price/weight, return NUMBERS only (realistic Indian market prices in INR).
-4. For SEO title (Product Name), use 60-80 chars.
-5. Return JSON only.
+INSTRUCTIONS:
+1. Exact Option Matching: If a field specifies OPTIONS, you MUST choose the most accurate one from that exact list.
+2. SEO Optimization: Generate highly optimized Product Titles (60-80 chars) and Descriptions.
+3. Realistic Data: Use realistic Indian market pricing (INR) and standard product specs.
+4. Data Types: 
+   - Dropdowns/Chips: Must match provided options.
+   - Numbers: Return pure numeric values.
+   - Textarea: Rich, benefit-driven descriptions.
 
-FIELDS TO FILL:
+FIELDS TO ANALYZE:
 `;
-
-  const schemaExample = {};
 
   fields.forEach(f => {
     if (f.type === 'file_upload') return;
-
-    let instructions = "";
-    if (f.type === 'dropdown' && f.optionLabels?.length > 0) {
-      instructions = `Choose exactly one from: [${f.optionLabels.join(', ')}]`;
-    } else if (f.type === 'multi_chip' && f.optionLabels?.length > 0) {
-      instructions = `Choose one or more from: [${f.optionLabels.join(', ')}] (as array)`;
-    } else if (f.type === 'number_input') {
-      instructions = "Number only (realistic for Indian market)";
+    
+    let constraint = "";
+    if (f.optionLabels?.length > 0) {
+      constraint = `[OPTIONS: ${f.optionLabels.join(', ')}]`;
+    } else if (f.type === 'number') {
+      constraint = "[TYPE: Numeric]";
     } else if (f.type === 'textarea') {
-      instructions = "Detailed SEO description (150-200 words)";
-    } else {
-      instructions = "Appropriate text value";
+      constraint = "[TYPE: Long Description]";
     }
 
-    prompt += `- ${f.label}: ${instructions}\n`;
-    schemaExample[f.label] = f.type === 'multi_chip' ? ["value"] : "value";
+    prompt += `- ${f.label}: ${constraint}\n`;
   });
 
-  prompt += `\nResponse must be valid JSON matching this keys: ${JSON.stringify(Object.keys(schemaExample))}`;
+  prompt += `\nReturn ONLY a JSON object where keys are the field labels and values are the extracted data.`;
   return prompt;
 }
 
@@ -110,16 +125,15 @@ function validateResults(results, fields) {
   fields.forEach(f => {
     let val = results[f.label];
     
-    if (f.type === 'dropdown' && f.optionLabels?.length > 0) {
+    if (f.optionLabels?.length > 0) {
+      // Fuzzy matching for options if AI didn't return exact string
       if (!f.optionLabels.includes(val)) {
-        // Fallback to closest match or first option
-        val = f.optionLabels.find(o => String(val).toLowerCase().includes(o.toLowerCase())) || f.optionLabels[0];
+        val = f.optionLabels.find(o => 
+          String(val).toLowerCase().includes(o.toLowerCase()) || 
+          o.toLowerCase().includes(String(val).toLowerCase())
+        ) || f.optionLabels[0];
       }
-    } else if (f.type === 'multi_chip' && f.optionLabels?.length > 0) {
-      const arr = Array.isArray(val) ? val : [val];
-      val = arr.filter(v => f.optionLabels.includes(v));
-      if (val.length === 0) val = [f.optionLabels[0]];
-    } else if (f.type === 'number_input') {
+    } else if (f.type === 'number') {
       val = parseFloat(String(val).replace(/[^0-9.]/g, ''));
       if (isNaN(val)) val = 0;
     }
@@ -129,6 +143,4 @@ function validateResults(results, fields) {
   return cleaned;
 }
 
-router.get('/health', (req, res) => res.json({ status: 'ok' }));
-
-module.exports = router;
+export default router;
