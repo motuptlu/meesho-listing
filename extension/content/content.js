@@ -403,143 +403,249 @@ class AutomationEngine {
 
 // --- SCANNING ENGINE ---
 
-class MeeshoScanner {
-    async scan() {
-        const fields = [];
-        const seen = new Set();
-        
-        const inputs = Array.from(document.querySelectorAll(CONFIG.SELECTORS.INPUTS));
-        
+class FieldDetectionEngine {
+    constructor() {
+        this.config = CONFIG;
+        this.fields = new Map();
+        this.observer = null;
+        this.initObserver();
+    }
+
+    initObserver() {
+        this.observer = new MutationObserver((mutations) => {
+            // Check if mutations contain relevant changes
+            const hasRelevantChange = mutations.some(m => 
+                m.type === 'childList' || 
+                (m.type === 'attributes' && ['role', 'aria-haspopup', 'class'].includes(m.attributeName))
+            );
+
+            if (hasRelevantChange) {
+                if (this.scanTimeout) clearTimeout(this.scanTimeout);
+                this.scanTimeout = setTimeout(() => this.backgroundScan(), 1000);
+            }
+        });
+        this.observer.observe(document.body, { 
+            childList: true, 
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['role', 'aria-haspopup', 'class']
+        });
+    }
+
+    async backgroundScan() {
+        const inputs = this.findAllInputs();
         for (const input of inputs) {
-            const label = this.getLabel(input);
-            if (!label || seen.has(label)) continue;
-            
-            const type = this.detectType(input);
-            const selector = this.generateSelector(input);
-            let optionLabels = [];
-
-            if (type === 'dropdown') {
-                optionLabels = await this.extractOptionLabels(input);
-            }
-            
-            fields.push({
-                label,
-                type,
-                required: this.checkRequired(input),
-                selector,
-                optionLabels,
-                id: Math.random().toString(36).substr(2, 9)
-            });
-            
-            seen.add(label);
-        }
-        
-        return fields;
-    }
-
-    async extractOptionLabels(el) {
-        try {
-            // 1. Check if it's a native select
-            if (el.tagName === 'SELECT') {
-                return Array.from(el.options).map(o => o.text.trim()).filter(Boolean);
-            }
-
-            // 2. Look for associated poppers/menus that might be in the DOM
-            // Sometimes React renders them hidden or we can find them by ARIA attributes
-            const ariaOwns = el.getAttribute('aria-owns') || el.getAttribute('aria-controls');
-            if (ariaOwns) {
-                const menu = document.getElementById(ariaOwns);
-                if (menu) {
-                    const options = Array.from(menu.querySelectorAll(CONFIG.SELECTORS.OPTIONS))
-                        .map(o => o.innerText.trim())
-                        .filter(Boolean);
-                    if (options.length > 0) return options;
-                }
-            }
-
-            // 3. Look for data attributes or common patterns in Meesho's custom dropdowns
-            const parent = el.closest('.MuiFormControl-root');
-            if (parent) {
-                // Some Meesho fields have helper text or descriptions that might list options, 
-                // but usually they are in a separate portal.
-            }
-
-            return [];
-        } catch (e) {
-            return [];
+            const field = await this.analyzeField(input);
+            if (field) this.fields.set(field.label, field);
         }
     }
 
-    getLabel(el) {
-        // 1. Label tag
+    async scan() {
+        await this.backgroundScan(); // Ensure latest
+        return Array.from(this.fields.values());
+    }
+
+    findAllInputs() {
+        // Expanded selector for Meesho's complex components
+        const selector = [
+            'input:not([type="hidden"])',
+            'textarea',
+            'select',
+            '[role="combobox"]',
+            '[role="textbox"]',
+            '[aria-haspopup="true"]',
+            '[aria-haspopup="listbox"]',
+            '.MuiSelect-select',
+            '[class*="Select-select"]',
+            '[class*="dropdown" i]',
+            '[contenteditable="true"]'
+        ].join(',');
+
+        return Array.from(document.querySelectorAll(selector)).filter(el => {
+            const style = window.getComputedStyle(el);
+            const isVisible = el.offsetParent !== null && style.display !== 'none' && style.visibility !== 'hidden';
+            const isNotButton = el.tagName !== 'BUTTON' || el.getAttribute('role') === 'combobox';
+            return isVisible && isNotButton;
+        });
+    }
+
+    async analyzeField(el) {
+        const label = this.findLabel(el);
+        if (!label || label.length < this.config.MIN_LABEL_LENGTH) return null;
+
+        const type = this.detectType(el);
+        const selector = this.generateSelector(el);
+        let optionLabels = [];
+
+        if (type === 'dropdown') {
+            optionLabels = await this.extractOptions(el);
+        }
+
+        return {
+            label,
+            type,
+            required: this.isRequired(el),
+            selector,
+            optionLabels,
+            id: Math.random().toString(36).substr(2, 9)
+        };
+    }
+
+    findLabel(el) {
+        // 1. Standard HTML labels
         if (el.id) {
-            const l = document.querySelector(`label[for="${el.id}"]`);
-            if (l) return l.innerText.trim();
-        }
-        
-        // 2. Parent-based search
-        let parent = el.parentElement;
-        for (let i = 0; i < 3; i++) {
-            if (!parent) break;
-            const textEl = parent.querySelector('span, p, label, h6');
-            if (textEl && textEl.innerText.trim().length > CONFIG.MIN_LABEL_LENGTH) {
-                return textEl.innerText.trim();
-            }
-            parent = parent.parentElement;
+            const label = document.querySelector(`label[for="${el.id}"]`);
+            if (label) return this.cleanLabel(label.innerText);
         }
 
-        return el.placeholder || el.getAttribute('aria-label') || '';
+        // 2. Aria Labels
+        const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby');
+        if (ariaLabel) {
+            if (ariaLabel.startsWith('Mui')) { // Handle ID-based labelledby
+                const labelEl = document.getElementById(ariaLabel);
+                if (labelEl) return this.cleanLabel(labelEl.innerText);
+            } else {
+                return this.cleanLabel(ariaLabel);
+            }
+        }
+
+        // 3. Parent-based label search (Material UI common pattern)
+        const formControl = el.closest('.MuiFormControl-root, [class*="FormControl"]');
+        if (formControl) {
+            const labelEl = formControl.querySelector('label, .MuiFormLabel-root, .MuiInputLabel-root');
+            if (labelEl) return this.cleanLabel(labelEl.innerText);
+        }
+
+        // 4. Recursive Upward Search
+        let current = el;
+        for (let i = 0; i < 4; i++) {
+            if (!current || current === document.body) break;
+            
+            // Check siblings
+            let prev = current.previousElementSibling;
+            while (prev) {
+                const text = prev.innerText.trim();
+                if (text.length > 2 && text.length < 50) return this.cleanLabel(text);
+                prev = prev.previousElementSibling;
+            }
+
+            // Check parent's text (if it's a small container)
+            const parentText = Array.from(current.parentElement.childNodes)
+                .filter(n => n.nodeType === Node.TEXT_NODE)
+                .map(n => n.textContent.trim())
+                .join('');
+            if (parentText.length > 2 && parentText.length < 50) return this.cleanLabel(parentText);
+
+            current = current.parentElement;
+        }
+
+        return this.cleanLabel(el.placeholder || el.name || '');
+    }
+
+    cleanLabel(text) {
+        if (!text) return '';
+        return text.replace(/\*/g, '').replace(/:$/, '').trim();
     }
 
     detectType(el) {
         if (el.tagName === 'TEXTAREA') return 'textarea';
+        
         const role = el.getAttribute('role');
         const ariaPopup = el.getAttribute('aria-haspopup');
         const className = el.className || '';
+        const typeAttr = el.getAttribute('type') || '';
         
-        if (role === 'combobox' || ariaPopup === 'true' || ariaPopup === 'listbox' || 
-            className.includes('Select-select') || className.includes('dropdown')) {
+        if (role === 'combobox' || 
+            ariaPopup === 'true' || 
+            ariaPopup === 'listbox' || 
+            className.includes('Select-select') || 
+            el.tagName === 'SELECT') {
             return 'dropdown';
         }
         
-        if (el.type === 'number' || el.inputMode === 'numeric') return 'number';
+        if (typeAttr === 'number' || 
+            el.inputMode === 'numeric' || 
+            el.id.toLowerCase().includes('price') || 
+            el.id.toLowerCase().includes('weight') ||
+            el.id.toLowerCase().includes('gst')) {
+            return 'number';
+        }
         
         return 'text';
     }
 
-    checkRequired(el) {
-        if (el.required || el.getAttribute('aria-required') === 'true') return true;
-        const container = el.closest('div');
-        return container ? container.innerText.includes('*') : false;
+    async extractOptions(el) {
+        // 1. Native Select
+        if (el.tagName === 'SELECT') {
+            return Array.from(el.options).map(o => o.text.trim()).filter(Boolean);
+        }
+
+        // 2. Aria Owns/Controls
+        const ariaOwns = el.getAttribute('aria-owns') || el.getAttribute('aria-controls');
+        if (ariaOwns) {
+            const menu = document.getElementById(ariaOwns);
+            if (menu) return this.collectOptionsFromMenu(menu);
+        }
+
+        // 3. Search for open listboxes (Portals)
+        const listboxes = document.querySelectorAll('[role="listbox"], .MuiMenu-list, .MuiAutocomplete-listbox, ul.MuiList-root');
+        for (const listbox of listboxes) {
+            const opts = this.collectOptionsFromMenu(listbox);
+            if (opts.length > 0) return opts;
+        }
+
+        // 4. DataList fallback
+        if (el.list) {
+            return Array.from(el.list.options).map(o => o.value.trim()).filter(Boolean);
+        }
+        
+        return [];
+    }
+
+    collectOptionsFromMenu(menu) {
+        return [...new Set(Array.from(menu.querySelectorAll('[role="option"], li, .MuiMenuItem-root'))
+            .map(o => o.innerText.trim())
+            .filter(Boolean))];
+    }
+
+    isRequired(el) {
+        return el.required || 
+               el.getAttribute('aria-required') === 'true' || 
+               el.closest('.Mui-required') !== null ||
+               el.closest('.required') !== null;
     }
 
     generateSelector(el) {
         if (el.id) return `#${CSS.escape(el.id)}`;
-        if (el.name) return `[name="${CSS.escape(el.name)}"]`;
         
-        // Class-based fallback (filtering out MUI dynamic classes)
-        const classes = Array.from(el.classList)
-            .filter(c => !c.includes('Mui') && !c.includes('css-'))
-            .map(c => `.${CSS.escape(c)}`)
-            .join('');
-        
-        if (classes) return `${el.tagName.toLowerCase()}${classes}`;
-        
-        // Path fallback
-        return this.getPathSelector(el);
-    }
-
-    getPathSelector(el) {
+        // Path-based selector is more reliable for dynamic React apps than name/class
         const path = [];
         let curr = el;
-        while (curr && curr.nodeType === Node.ELEMENT_NODE && path.length < 5) {
+        while (curr && curr.nodeType === Node.ELEMENT_NODE && path.length < 8) {
             let selector = curr.nodeName.toLowerCase();
+            if (curr.id) {
+                selector += `#${CSS.escape(curr.id)}`;
+                path.unshift(selector);
+                break;
+            }
             const index = Array.from(curr.parentNode.children).indexOf(curr) + 1;
             selector += `:nth-child(${index})`;
             path.unshift(selector);
             curr = curr.parentNode;
         }
         return path.join(' > ');
+    }
+}
+
+class MeeshoScanner {
+    constructor() {
+        this.engine = new FieldDetectionEngine();
+    }
+
+    async scan() {
+        showStatus('🔍 Scanning Form Layout...');
+        const fields = await this.engine.scan();
+        return fields;
     }
 }
 

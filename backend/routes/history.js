@@ -1,18 +1,12 @@
 import express from 'express';
 import { db } from '../lib/firebase.js';
-import { authenticateUser } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Apply authentication middleware to all history routes
-router.use(authenticateUser);
-
-// Get history for current user
+// Get history (removed authentication)
 router.get('/', async (req, res) => {
     try {
-        const { user } = req; // decoded token from middleware
         const snapshot = await db.collection('history')
-            .where('userId', '==', user.uid)
             .orderBy('timestamp', 'desc')
             .limit(50)
             .get();
@@ -29,23 +23,11 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Delete history item
+// Delete history item (removed authentication)
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { user } = req;
-
         const docRef = db.collection('history').doc(id);
-        const doc = await docRef.get();
-
-        if (!doc.exists) {
-            return res.status(404).json({ success: false, error: 'Not found' });
-        }
-
-        if (doc.data().userId !== user.uid) {
-            return res.status(403).json({ success: false, error: 'Forbidden' });
-        }
-
         await docRef.delete();
         res.json({ success: true });
     } catch (error) {
@@ -53,13 +35,10 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-// Clear all history
+// Clear all history (removed authentication)
 router.delete('/', async (req, res) => {
     try {
-        const { user } = req;
-        const snapshot = await db.collection('history')
-            .where('userId', '==', user.uid)
-            .get();
+        const snapshot = await db.collection('history').get();
 
         const batch = db.batch();
         snapshot.forEach(doc => {

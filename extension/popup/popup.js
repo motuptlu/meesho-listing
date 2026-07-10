@@ -99,56 +99,19 @@ class PopupController {
     // --- AUTH ---
 
     async checkAuth() {
-        if (this.state?.user) {
-            this.showView('mainView');
-            this.updateUserUI();
-        } else {
-            this.showView('authView');
-        }
+        this.showView('mainView');
     }
 
     async handleLogin() {
-        chrome.runtime.sendMessage({ action: 'AUTH_LOGIN' }, async (response) => {
-            if (response.success) {
-                this.state.user = response.user;
-                
-                // Sync with Backend
-                try {
-                    const syncRes = await fetch(`${BACKEND_URL}/api/auth/sync`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${this.state.user.token}`
-                        }
-                    });
-                    const syncData = await syncRes.json();
-                    if (syncData.success) {
-                        this.state.user = { ...this.state.user, ...syncData.user };
-                    }
-                } catch (e) {
-                    console.warn('Profile sync failed:', e);
-                }
-
-                this.showView('mainView');
-                this.updateUserUI();
-                this.showToast('Logged in successfully', 'success');
-            } else {
-                this.showToast('Login failed: ' + response.error, 'error');
-            }
-        });
+        // Auth removed
     }
 
     handleLogout() {
-        chrome.runtime.sendMessage({ action: 'AUTH_LOGOUT' }, () => {
-            this.state.user = null;
-            this.showView('authView');
-        });
+        // Auth removed
     }
 
     updateUserUI() {
-        const user = this.state.user;
-        if (!user) return;
-        document.getElementById('userName').innerText = user.name || user.email;
-        document.getElementById('userAvatar').src = user.picture || 'https://www.gravatar.com/avatar/?d=mp';
+        // Auth removed
     }
 
     // --- WORKFLOW ---
@@ -229,9 +192,6 @@ class PopupController {
 
         const res = await fetch(`${BACKEND_URL}/api/analyze`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${this.state.user.token}`
-            },
             body: formData
         });
 
@@ -326,9 +286,7 @@ class PopupController {
         list.innerHTML = '<div class="loading">Loading history...</div>';
 
         try {
-            const res = await fetch(`${BACKEND_URL}/api/history`, {
-                headers: { 'Authorization': `Bearer ${this.state.user.token}` }
-            });
+            const res = await fetch(`${BACKEND_URL}/api/history`);
             const data = await res.json();
             
             if (data.success && data.history.length > 0) {
