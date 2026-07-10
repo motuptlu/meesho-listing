@@ -3,7 +3,7 @@
  * Manages UI, Auth, and Automation Workflow
  */
 
-const BACKEND_URL = 'http://localhost:3000'; // Replace with production URL if deployed
+const BACKEND_URL = 'https://ais-dev-clrnti3bzhacw6tpz7qw6w-47165258965.asia-east1.run.app'; // Replace with production URL if deployed
 
 class PopupController {
     constructor() {
@@ -92,10 +92,27 @@ class PopupController {
         }
     }
 
-    handleLogin() {
-        chrome.runtime.sendMessage({ action: 'AUTH_LOGIN' }, (response) => {
+    async handleLogin() {
+        chrome.runtime.sendMessage({ action: 'AUTH_LOGIN' }, async (response) => {
             if (response.success) {
                 this.state.user = response.user;
+                
+                // Sync with Backend
+                try {
+                    const syncRes = await fetch(`${BACKEND_URL}/api/auth/sync`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.state.user.token}`
+                        }
+                    });
+                    const syncData = await syncRes.json();
+                    if (syncData.success) {
+                        this.state.user = { ...this.state.user, ...syncData.user };
+                    }
+                } catch (e) {
+                    console.warn('Profile sync failed:', e);
+                }
+
                 this.showView('mainView');
                 this.updateUserUI();
                 this.showToast('Logged in successfully', 'success');

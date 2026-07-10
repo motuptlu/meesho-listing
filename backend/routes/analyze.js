@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { GoogleGenAI } from '@google/genai';
-import { db } from '../server.js';
+import { db } from '../lib/firebase.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
@@ -33,27 +33,27 @@ router.post('/', upload.array('images', 5), async (req, res) => {
     const fields = fieldsInfo.fields;
 
     const imageParts = req.files.map(file => ({
-      inlineData: {
-        data: file.buffer.toString('base64'),
-        mimeType: file.mimetype
-      }
+      type: "image",
+      data: file.buffer.toString('base64'),
+      mime_type: file.mimetype
     }));
 
     const prompt = buildDynamicPrompt(fields);
 
-    // Using the requested model
-    const result = await ai.models.generateContent({
+    // Using the requested model via Interactions API
+    const interaction = await ai.interactions.create({
       model: "gemini-2.5-flash",
-      contents: {
-        parts: [
-          { text: prompt },
-          ...imageParts
-        ]
+      input: [
+        { type: "text", text: prompt },
+        ...imageParts
+      ],
+      generation_config: {
+        temperature: 0.2,
+        max_output_tokens: 2048,
       }
     });
 
-    const response = result;
-    let text = response.text;
+    let text = interaction.output_text || '';
     
     // Clean potential markdown code blocks
     text = text.replace(/```json\n?|```/g, '').trim();
@@ -68,7 +68,7 @@ router.post('/', upload.array('images', 5), async (req, res) => {
       results: cleanedResults,
       timestamp: new Date().toISOString(),
       productName: cleanedResults['Product Name'] || cleanedResults['Title'] || 'Untitled Product',
-      thumbnail: imageParts[0].inlineData.data // Store small thumbnail
+      thumbnail: imageParts.length > 0 ? imageParts[0].data : '' 
     };
 
     await db.collection('history').doc(historyId).set(historyData);

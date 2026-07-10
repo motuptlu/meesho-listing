@@ -4,7 +4,7 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import admin from 'firebase-admin';
+import { admin, db, storage } from './lib/firebase.js';
 
 // Routes
 import analyzeRouter from './routes/analyze.js';
@@ -13,22 +13,8 @@ import authRouter from './routes/auth.js';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Initialize Firebase Admin
-if (!admin.apps.length) {
-    admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-        storageBucket: `${process.env.FIREBASE_PROJECT_ID}.appspot.com`
-    });
-}
-
-const db = admin.firestore();
-const storage = admin.storage();
 
 // Middleware
 app.use(cors());
@@ -49,8 +35,24 @@ export const authenticateUser = async (req, res, next) => {
         req.user = decodedToken;
         next();
     } catch (error) {
-        console.error('Auth Error:', error);
-        res.status(401).json({ success: false, error: 'Invalid token' });
+        // Fallback for Google Access Tokens (from chrome.identity)
+        try {
+            const googleRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${idToken}`);
+            if (!googleRes.ok) throw new Error('Invalid Google Token');
+            
+            const profile = await googleRes.json();
+            req.user = {
+                uid: profile.sub,
+                email: profile.email,
+                name: profile.name,
+                picture: profile.picture,
+                firebase: false
+            };
+            next();
+        } catch (err) {
+            console.error('Auth Error:', error);
+            res.status(401).json({ success: false, error: 'Invalid token' });
+        }
     }
 };
 
@@ -59,12 +61,26 @@ app.use('/api/analyze', authenticateUser, analyzeRouter);
 app.use('/api/history', authenticateUser, historyRouter);
 app.use('/api/auth', authRouter);
 
+// Serve static files in production
+if (process.env.NODE_ENV === 'production') {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+        // Only serve index.html for non-API routes
+        if (!req.path.startsWith('/api/')) {
+            res.sendFile(path.join(distPath, 'index.html'));
+        } else {
+            res.status(404).json({ error: 'API route not found' });
+        }
+    });
+}
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'ok', 
         message: 'Meesho Auto Lister Backend is running',
-        firebase: admin.apps.length > 0
+        firebase: (admin.apps || []).length > 0
     });
 });
 

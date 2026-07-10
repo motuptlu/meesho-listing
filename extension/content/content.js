@@ -416,12 +416,18 @@ class MeeshoScanner {
             
             const type = this.detectType(input);
             const selector = this.generateSelector(input);
+            let optionLabels = [];
+
+            if (type === 'dropdown') {
+                optionLabels = await this.extractOptionLabels(input);
+            }
             
             fields.push({
                 label,
                 type,
                 required: this.checkRequired(input),
                 selector,
+                optionLabels,
                 id: Math.random().toString(36).substr(2, 9)
             });
             
@@ -429,6 +435,25 @@ class MeeshoScanner {
         }
         
         return fields;
+    }
+
+    async extractOptionLabels(el) {
+        try {
+            // 1. Check if it's a native select
+            if (el.tagName === 'SELECT') {
+                return Array.from(el.options).map(o => o.text.trim()).filter(Boolean);
+            }
+
+            // 2. Try to trigger it to see if options appear (risky but accurate)
+            // For now, let's look for existing labels/hints or assume the automation will handle fuzzy matching later.
+            // Better: Check for ARIA or data-attributes that might list options
+            const dataOptions = el.getAttribute('data-options') || el.getAttribute('aria-owns');
+            if (dataOptions) return dataOptions.split(',');
+
+            return [];
+        } catch (e) {
+            return [];
+        }
     }
 
     getLabel(el) {
