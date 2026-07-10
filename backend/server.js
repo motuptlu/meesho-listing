@@ -24,8 +24,8 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Routes
-app.use('/api/analyze', authenticateUser, analyzeRouter);
-app.use('/api/history', authenticateUser, historyRouter);
+app.use('/api/analyze', analyzeRouter);
+app.use('/api/history', historyRouter);
 app.use('/api/auth', authRouter);
 
 // Serve static files in production

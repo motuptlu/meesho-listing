@@ -29,7 +29,6 @@ class PopupController {
             this.renderAnalysisForm();
         }
 
-        this.checkAuth();
         this.checkMeeshoPage();
     }
 
@@ -60,27 +59,34 @@ class PopupController {
     }
 
     setupEventListeners() {
-        // Auth
-        document.getElementById('loginBtn').addEventListener('click', () => this.handleLogin());
-        document.getElementById('logoutBtn').addEventListener('click', () => this.handleLogout());
-
         // Navigation
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', (e) => this.switchTab(e.target.dataset.tab));
         });
 
         // Step 1
-        document.getElementById('dropZone').addEventListener('click', () => document.getElementById('fileInput').click());
-        document.getElementById('fileInput').addEventListener('change', (e) => this.handleFileSelect(e));
-        document.getElementById('scanBtn').addEventListener('click', () => this.handleScanAndAnalyze());
+        const dropZone = document.getElementById('dropZone');
+        if (dropZone) dropZone.addEventListener('click', () => document.getElementById('fileInput').click());
+        
+        const fileInput = document.getElementById('fileInput');
+        if (fileInput) fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        
+        const scanBtn = document.getElementById('scanBtn');
+        if (scanBtn) scanBtn.addEventListener('click', () => this.handleScanAndAnalyze());
 
         // Step 2
-        document.getElementById('backTo1').addEventListener('click', () => this.goToStep(1));
-        document.getElementById('startFillBtn').addEventListener('click', () => this.handleStartFill());
+        const backTo1 = document.getElementById('backTo1');
+        if (backTo1) backTo1.addEventListener('click', () => this.goToStep(1));
+        
+        const startFillBtn = document.getElementById('startFillBtn');
+        if (startFillBtn) startFillBtn.addEventListener('click', () => this.handleStartFill());
 
         // Step 3
-        document.getElementById('cancelFillBtn').addEventListener('click', () => this.handleCancelFill());
-        document.getElementById('finishBtn').addEventListener('click', () => this.handleFinish());
+        const cancelFillBtn = document.getElementById('cancelFillBtn');
+        if (cancelFillBtn) cancelFillBtn.addEventListener('click', () => this.handleCancelFill());
+        
+        const finishBtn = document.getElementById('finishBtn');
+        if (finishBtn) finishBtn.addEventListener('click', () => this.handleFinish());
 
         // Listen for progress from background
         chrome.runtime.onMessage.addListener((message) => {

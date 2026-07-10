@@ -61,22 +61,22 @@ router.post('/', upload.array('images', 5), async (req, res) => {
     const results = JSON.parse(text);
     const cleanedResults = validateResults(results, fields);
 
-    // Auto-save to history
-    const historyId = uuidv4();
-    const historyData = {
-      userId: user.uid,
-      results: cleanedResults,
-      timestamp: new Date().toISOString(),
-      productName: cleanedResults['Product Name'] || cleanedResults['Title'] || 'Untitled Product',
-      thumbnail: imageParts.length > 0 ? imageParts[0].data : '' 
-    };
-
-    await db.collection('history').doc(historyId).set(historyData);
+    // Auto-save to history (Only if user is logged in)
+    if (user && user.uid) {
+      const historyId = uuidv4();
+      const historyData = {
+        userId: user.uid,
+        results: cleanedResults,
+        timestamp: new Date().toISOString(),
+        productName: cleanedResults['Product Name'] || cleanedResults['Title'] || 'Untitled Product',
+        thumbnail: imageParts.length > 0 ? imageParts[0].data : '' 
+      };
+      await db.collection('history').doc(historyId).set(historyData).catch(e => console.warn('Failed to save history:', e));
+    }
 
     res.json({ 
       success: true, 
-      results: cleanedResults,
-      historyId
+      results: cleanedResults
     });
 
   } catch (error) {
@@ -106,11 +106,11 @@ FIELDS TO ANALYZE:
     
     let constraint = "";
     if (f.optionLabels?.length > 0) {
-      constraint = `[OPTIONS: ${f.optionLabels.join(', ')}]`;
+      constraint = `[MUST CHOOSE FROM: ${f.optionLabels.join(', ')}]`;
     } else if (f.type === 'number') {
-      constraint = "[TYPE: Numeric]";
+      constraint = "[TYPE: Numeric Value Only]";
     } else if (f.type === 'textarea') {
-      constraint = "[TYPE: Long Description]";
+      constraint = "[TYPE: Long Form Text]";
     }
 
     prompt += `- ${f.label}: ${constraint}\n`;

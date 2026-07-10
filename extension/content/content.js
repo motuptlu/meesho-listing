@@ -444,11 +444,25 @@ class MeeshoScanner {
                 return Array.from(el.options).map(o => o.text.trim()).filter(Boolean);
             }
 
-            // 2. Try to trigger it to see if options appear (risky but accurate)
-            // For now, let's look for existing labels/hints or assume the automation will handle fuzzy matching later.
-            // Better: Check for ARIA or data-attributes that might list options
-            const dataOptions = el.getAttribute('data-options') || el.getAttribute('aria-owns');
-            if (dataOptions) return dataOptions.split(',');
+            // 2. Look for associated poppers/menus that might be in the DOM
+            // Sometimes React renders them hidden or we can find them by ARIA attributes
+            const ariaOwns = el.getAttribute('aria-owns') || el.getAttribute('aria-controls');
+            if (ariaOwns) {
+                const menu = document.getElementById(ariaOwns);
+                if (menu) {
+                    const options = Array.from(menu.querySelectorAll(CONFIG.SELECTORS.OPTIONS))
+                        .map(o => o.innerText.trim())
+                        .filter(Boolean);
+                    if (options.length > 0) return options;
+                }
+            }
+
+            // 3. Look for data attributes or common patterns in Meesho's custom dropdowns
+            const parent = el.closest('.MuiFormControl-root');
+            if (parent) {
+                // Some Meesho fields have helper text or descriptions that might list options, 
+                // but usually they are in a separate portal.
+            }
 
             return [];
         } catch (e) {
@@ -479,8 +493,17 @@ class MeeshoScanner {
 
     detectType(el) {
         if (el.tagName === 'TEXTAREA') return 'textarea';
-        if (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-haspopup')) return 'dropdown';
-        if (el.classList.contains('MuiSelect-select')) return 'dropdown';
+        const role = el.getAttribute('role');
+        const ariaPopup = el.getAttribute('aria-haspopup');
+        const className = el.className || '';
+        
+        if (role === 'combobox' || ariaPopup === 'true' || ariaPopup === 'listbox' || 
+            className.includes('Select-select') || className.includes('dropdown')) {
+            return 'dropdown';
+        }
+        
+        if (el.type === 'number' || el.inputMode === 'numeric') return 'number';
+        
         return 'text';
     }
 
