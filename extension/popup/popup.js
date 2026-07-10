@@ -19,7 +19,16 @@ class PopupController {
     async init() {
         await this.loadStateFromBackground();
         this.setupEventListeners();
-        this.render();
+        
+        // Restore UI State
+        if (this.uploadedImages.length > 0) {
+            this.renderImagePreviews();
+            document.getElementById('scanBtn').disabled = false;
+        }
+        if (this.analysisResults) {
+            this.renderAnalysisForm();
+        }
+
         this.checkAuth();
         this.checkMeeshoPage();
     }
